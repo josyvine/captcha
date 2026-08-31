@@ -43,6 +43,22 @@ object Logger {
                 }
             }
 
+            // Check if there was an uncaught crash recorded in preferences from the previous session
+            val mainPrefs = appCtx.getSharedPreferences("capt_solver_prefs", Context.MODE_PRIVATE)
+            val lastCrash = mainPrefs.getString("key_last_crash", null)
+            if (!lastCrash.isNullOrBlank()) {
+                val crashEntry = LogEntry(
+                    timestamp = timeFormat.format(Date()),
+                    tag = "CRASH",
+                    message = "PREVIOUS SESSION CRASH REPORT:\n$lastCrash",
+                    level = LogLevel.ERROR
+                )
+                loadedLogs.add(crashEntry)
+                appendToFile(crashEntry)
+                // Clear the recorded crash so it's not repeatedly added on future boots
+                mainPrefs.edit().remove("key_last_crash").apply()
+            }
+
             if (loadedLogs.isEmpty()) {
                 val initEntry = LogEntry(
                     timestamp = timeFormat.format(Date()),
@@ -147,5 +163,3 @@ object Logger {
         clipboard.setPrimaryClip(clip)
     }
 }
-
-
