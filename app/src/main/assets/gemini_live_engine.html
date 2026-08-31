@@ -652,11 +652,12 @@ Be precise, extremely fast, and execute tool calls immediately.`;
           }
         ];
 
+        // FIXED: responseModalities strictly ["AUDIO"] for Gemini Live Bidirectional WebSocket API
         const setupPayload = {
           setup: {
             model: "models/" + model,
             generationConfig: {
-              responseModalities: ["AUDIO", "TEXT"],
+              responseModalities: ["AUDIO"],
               speechConfig: {
                 voiceConfig: {
                   prebuiltVoiceConfig: {
