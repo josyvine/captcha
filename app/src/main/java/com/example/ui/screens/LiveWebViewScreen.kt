@@ -14,12 +14,29 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -31,7 +48,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.example.model.LogLevel
-import com.example.ui.theme.*
+import com.example.ui.theme.CardBorder
+import com.example.ui.theme.CyanGlow
+import com.example.ui.theme.DeepNavyBg
+import com.example.ui.theme.NeonGreen
+import com.example.ui.theme.PrimaryContainerDark
 import com.example.ui.viewmodel.MainViewModel
 import com.example.util.Logger
 import java.io.ByteArrayOutputStream
@@ -50,6 +71,14 @@ fun LiveWebViewScreen(
     val selectedModel by viewModel.selectedModel.collectAsState()
     val currentFrame by viewModel.currentFrame.collectAsState()
 
+    DisposableEffect(Unit) {
+        onDispose {
+            webViewInstance?.evaluateJavascript("disconnectLiveWebSocket();", null)
+            webViewInstance?.destroy()
+            webViewInstance = null
+        }
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -57,7 +86,7 @@ fun LiveWebViewScreen(
             .padding(start = 10.dp, end = 10.dp, top = 6.dp, bottom = 4.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        // Ultra-compact single-line top bar with Google Material Icons
+        // Ultra-compact single-line top bar with status indicator and actions
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -101,13 +130,14 @@ fun LiveWebViewScreen(
                         val frame = currentFrame
                         if (frame != null) {
                             val stream = ByteArrayOutputStream()
-                            frame.compress(Bitmap.CompressFormat.JPEG, 80, stream)
+                            frame.compress(Bitmap.CompressFormat.JPEG, 75, stream)
                             val base64 = Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP)
-                            webViewInstance?.evaluateJavascript("sendRealtimeImage('$base64');", null)
-                            Logger.log("VISION", "Pushed active frame to Gemini Live stream.", LogLevel.VISION)
+                            webViewInstance?.evaluateJavascript("window.injectScreenFrame('$base64');", null)
+                            Logger.log("VISION", "Manually pushed current screen frame to Live stream.", LogLevel.VISION)
                             Toast.makeText(context, "Frame sent to Live stream", Toast.LENGTH_SHORT).show()
                         } else {
-                            Toast.makeText(context, "No screen frame available yet", Toast.LENGTH_SHORT).show()
+                            viewModel.refreshCurrentFrame()
+                            Toast.makeText(context, "Capturing fresh screen frame...", Toast.LENGTH_SHORT).show()
                         }
                     },
                     modifier = Modifier
@@ -157,12 +187,16 @@ fun LiveWebViewScreen(
                     .clip(RoundedCornerShape(10.dp)),
                 factory = { ctx ->
                     WebView(ctx).apply {
-                        settings.javaScriptEnabled = true
-                        settings.domStorageEnabled = true
-                        settings.mediaPlaybackRequiresUserGesture = false
-                        settings.cacheMode = WebSettings.LOAD_DEFAULT
-                        settings.useWideViewPort = true
-                        settings.loadWithOverviewMode = true
+                        settings.apply {
+                            javaScriptEnabled = true
+                            domStorageEnabled = true
+                            mediaPlaybackRequiresUserGesture = false
+                            cacheMode = WebSettings.LOAD_DEFAULT
+                            useWideViewPort = true
+                            loadWithOverviewMode = true
+                            allowFileAccess = true
+                            allowContentAccess = true
+                        }
 
                         webChromeClient = object : WebChromeClient() {
                             override fun onPermissionRequest(request: PermissionRequest?) {
@@ -177,7 +211,7 @@ fun LiveWebViewScreen(
                             }
                         }
 
-                        // Register Native JavaScript Bridge
+                        // Register Native JavaScript Bridge matching gemini_live_engine.html
                         addJavascriptInterface(object {
                             @JavascriptInterface
                             fun getGeminiApiKey(): String {
@@ -219,6 +253,27 @@ fun LiveWebViewScreen(
                             }
 
                             @JavascriptInterface
+                            fun onLiveAnswer(answer: String, clickX: Float, clickY: Float) {
+                                (context as? android.app.Activity)?.runOnUiThread {
+                                    viewModel.onLiveAnswerReceived(answer, clickX, clickY)
+                                }
+                            }
+
+                            @JavascriptInterface
+                            fun onLiveClick(xPercent: Float, yPercent: Float) {
+                                (context as? android.app.Activity)?.runOnUiThread {
+                                    viewModel.onLiveClickReceived(xPercent, yPercent)
+                                }
+                            }
+
+                            @JavascriptInterface
+                            fun onLiveHint(wrongGuess: String, correctAnswer: String, directive: String) {
+                                (context as? android.app.Activity)?.runOnUiThread {
+                                    viewModel.handleErrorCorrection(wrongGuess, correctAnswer, directive)
+                                }
+                            }
+
+                            @JavascriptInterface
                             fun onSubmitCaptchaAnswer(answer: String, clickX: Float, clickY: Float) {
                                 (context as? android.app.Activity)?.runOnUiThread {
                                     viewModel.onLiveAnswerReceived(answer, clickX, clickY)
@@ -232,9 +287,9 @@ fun LiveWebViewScreen(
                                     val frame = viewModel.currentFrame.value
                                     if (frame != null) {
                                         val stream = ByteArrayOutputStream()
-                                        frame.compress(Bitmap.CompressFormat.JPEG, 80, stream)
+                                        frame.compress(Bitmap.CompressFormat.JPEG, 75, stream)
                                         val base64 = Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP)
-                                        webViewInstance?.evaluateJavascript("window.sendLiveFrame('$base64');", null)
+                                        webViewInstance?.evaluateJavascript("window.injectScreenFrame('$base64');", null)
                                     }
                                 }
                             }
@@ -247,31 +302,14 @@ fun LiveWebViewScreen(
                             }
 
                             @JavascriptInterface
-                            fun logError(msg: String) {
-                                Logger.log("ERROR", msg, LogLevel.ERROR)
-                            }
-
-                            @JavascriptInterface
-                            fun onAnswer(answer: String, clickX: Float, clickY: Float) {
-                                (context as? android.app.Activity)?.runOnUiThread {
-                                    viewModel.onLiveAnswerReceived(answer, clickX, clickY)
-                                }
-                            }
-
-                            @JavascriptInterface
-                            fun onErrorCorrection(wrongGuess: String, correctAnswer: String, directive: String) {
-                                viewModel.handleErrorCorrection(wrongGuess, correctAnswer, directive)
-                            }
-
-                            @JavascriptInterface
-                            fun onLog(tag: String, message: String, level: String) {
-                                val logLevel = try { LogLevel.valueOf(level) } catch (_: Exception) { LogLevel.INFO }
+                            fun log(tag: String, message: String, level: String) {
+                                val logLevel = try { LogLevel.valueOf(level.uppercase()) } catch (_: Exception) { LogLevel.INFO }
                                 Logger.log(tag, message, logLevel)
                             }
 
                             @JavascriptInterface
-                            fun onStatusChange(status: String) {
-                                Logger.log("NETWORK", "Gemini Live status: $status", LogLevel.NETWORK)
+                            fun logError(msg: String) {
+                                Logger.log("ERROR", msg, LogLevel.ERROR)
                             }
                         }, "AndroidInterface")
 
