@@ -3,11 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>2Captcha Gemini Live Engine</title>
+  <title>2Captcha Gemini Live WebSocket Engine</title>
   <style>
     :root {
       --bg-dark: #090D16;
-      --card-bg: rgba(15, 23, 42, 0.94);
+      --card-bg: rgba(15, 23, 42, 0.95);
       --accent-cyan: #00F0FF;
       --accent-green: #00FF66;
       --accent-amber: #FFB800;
@@ -135,7 +135,7 @@
       overflow: hidden;
     }
 
-    /* Puter Sparkle Indicator */
+    /* Sparkle Indicator */
     .sparkle-icon {
       font-size: 16px;
       color: #A5B4FC;
@@ -156,14 +156,47 @@
       100% { filter: hue-rotate(360deg); }
     }
 
+    /* Live Preview Container */
+    .preview-container {
+      position: relative;
+      width: 100%;
+      height: 120px;
+      background-color: #020617;
+      border: 1px solid #1E293B;
+      border-radius: 8px;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .preview-container img {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+    }
+
+    .preview-overlay-badge {
+      position: absolute;
+      top: 6px;
+      left: 6px;
+      background-color: rgba(11, 17, 30, 0.85);
+      color: var(--accent-cyan);
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      border: 1px solid rgba(0, 240, 255, 0.4);
+      font-family: monospace;
+    }
+
     /* Live Transcript Feed */
     .transcript-box {
       background: #020617;
       border: 1px solid #1E293B;
       border-radius: 8px;
       padding: 10px;
-      min-height: 90px;
-      max-height: 180px;
+      min-height: 75px;
+      max-height: 140px;
       overflow-y: auto;
       font-size: 12px;
       line-height: 1.4;
@@ -183,6 +216,7 @@
     .speaker-label.gemini { color: var(--accent-cyan); }
     .speaker-label.system { color: var(--accent-amber); }
     .speaker-label.error { color: var(--accent-red); }
+    .speaker-label.action { color: var(--accent-green); }
 
     /* Telemetry Metrics */
     .metrics-bar {
@@ -224,7 +258,7 @@
       font-family: 'Courier New', Courier, monospace;
       font-size: 10px;
       color: #00FF66;
-      height: 110px;
+      height: 100px;
       overflow-y: auto;
       white-space: pre-wrap;
       word-break: break-all;
@@ -261,7 +295,7 @@
         <span class="metric-lbl">Latency</span>
       </div>
       <div class="metric-item">
-        <span class="metric-val" id="valModel">3.1-Live</span>
+        <span class="metric-val" id="valModel">Live-Bidi</span>
         <span class="metric-lbl">Model</span>
       </div>
       <div class="metric-item">
@@ -299,11 +333,24 @@
     </div>
   </div>
 
+  <!-- Real-Time Screen Stream Frame Preview -->
+  <div class="glass-card">
+    <div class="header-row" style="margin-bottom: 6px;">
+      <span style="font-size: 12px; font-weight: 700; color: var(--accent-cyan);">REAL-TIME FRAME INGESTION</span>
+      <span style="font-size: 10px; color: var(--text-muted);" id="valFps">1.25 FPS Stream</span>
+    </div>
+    <div class="preview-container">
+      <span class="preview-overlay-badge" id="frameCounterBadge">FRAME: 0</span>
+      <img id="streamPreviewImg" alt="Live Frame" style="display:none;" />
+      <div id="noStreamPlaceholder" style="color: #64748B; font-size: 11px; font-family: monospace;">Awaiting Live Screen Frame...</div>
+    </div>
+  </div>
+
   <!-- Real-Time Dialogue / Live Feed Card -->
   <div class="glass-card">
-    <div class="header-row" style="margin-bottom: 8px;">
-      <span style="font-size: 13px; font-weight: 700; color: var(--accent-cyan);">LIVE ASSISTANT STREAM</span>
-      <span style="font-size: 11px; color: var(--text-muted);">16kHz PCM In / 24kHz Out</span>
+    <div class="header-row" style="margin-bottom: 6px;">
+      <span style="font-size: 12px; font-weight: 700; color: var(--accent-cyan);">LIVE ROBOTIC CONTROLLER</span>
+      <span style="font-size: 10px; color: var(--text-muted);">16kHz PCM In / 24kHz Out</span>
     </div>
     <div class="transcript-box" id="transcriptBox">
       <div class="speaker-label system">System</div>
@@ -332,12 +379,15 @@
     let isConnected = false;
     let toolCallCount = 0;
     let lastPingTime = 0;
+    let frameCount = 0;
+    let selectedLiveModel = "gemini-3.1-flash-live-preview";
+    let activeVoice = "Puck";
 
     // Window error handler
     window.onerror = function(msg, url, line, col, error) {
       appendLog(`[ERROR] ${msg} (${line}:${col})`);
-      if (window.AndroidInterface && window.AndroidInterface.logError) {
-        window.AndroidInterface.logError(`WebView JS Error: ${msg} (${line}:${col})`);
+      if (window.AndroidInterface && window.AndroidInterface.log) {
+        window.AndroidInterface.log("WEBVIEW", `JS Error: ${msg} (${line}:${col})`, "ERROR");
       }
       return false;
     };
@@ -412,12 +462,10 @@
       }
     }
 
-    let selectedLiveModel = "gemini-3.1-flash-live-preview";
-
     function onLiveModelChange(val) {
       selectedLiveModel = val;
       document.getElementById('valModel').textContent = val.replace("gemini-", "").substring(0, 10);
-      appendLog(`Live model updated to: ${val}`);
+      appendLog(`Live model selection changed to: ${val}`);
       if (isConnected) {
         disconnectLiveWebSocket();
         startLiveWebSocket();
@@ -428,39 +476,24 @@
       if (!requestedModel) return selectedLiveModel || "gemini-3.1-flash-live-preview";
       const clean = requestedModel.trim().replace(/^models\//, "");
 
-      // If user manually chose via dropdown, respect that
       const dropdownVal = document.getElementById('liveModelSelect')?.value;
       if (dropdownVal) {
         return dropdownVal;
       }
 
-      // Valid live models
       if (clean === "gemini-3.1-flash-live-preview" ||
           clean === "gemini-2.5-flash-native-audio-preview-12-2025" ||
-          clean === "gemini-2.0-flash-exp" ||
-          clean === "gemini-2.0-flash") {
+          clean === "gemini-2.0-flash-exp") {
         return clean;
       }
 
-      if (clean.includes("3.1")) {
-        appendLog(`[SYSTEM] Live model mapped from '${clean}' to 'gemini-3.1-flash-live-preview'`);
-        return "gemini-3.1-flash-live-preview";
-      }
+      if (clean.includes("3.1")) return "gemini-3.1-flash-live-preview";
+      if (clean.includes("2.5")) return "gemini-2.5-flash-native-audio-preview-12-2025";
+      if (clean.includes("2.0")) return "gemini-2.0-flash-exp";
 
-      if (clean.includes("2.5")) {
-        appendLog(`[SYSTEM] Live model mapped from '${clean}' to 'gemini-2.5-flash-native-audio-preview-12-2025'`);
-        return "gemini-2.5-flash-native-audio-preview-12-2025";
-      }
-
-      if (clean.includes("2.0")) {
-        return "gemini-2.0-flash-exp";
-      }
-
-      appendLog(`[SYSTEM] Defaulting to 'gemini-3.1-flash-live-preview' for Bidi WebSocket stream.`);
       return "gemini-3.1-flash-live-preview";
     }
 
-    // Toggle WebSocket Live Connection
     function toggleLiveWebSocket() {
       if (isConnected) {
         disconnectLiveWebSocket();
@@ -469,34 +502,44 @@
       }
     }
 
-    function startLiveWebSocket() {
-      let apiKey = "";
-      let model = selectedLiveModel;
-      let voice = "Puck";
+    // Called directly from Compose Android Bridge
+    window.startLiveSession = function(key, model, voice, rulesJson) {
+      if (key) apiKey = key;
+      if (model) selectedLiveModel = model;
+      if (voice) activeVoice = voice;
+      startLiveWebSocket(key, model, voice, rulesJson);
+    };
+
+    window.stopLiveSession = function() {
+      disconnectLiveWebSocket();
+    };
+
+    function startLiveWebSocket(explicitKey, explicitModel, explicitVoice, explicitRulesJson) {
+      let apiKey = explicitKey || "";
+      let model = resolveLiveModel(explicitModel || selectedLiveModel);
+      let voice = explicitVoice || activeVoice || "Puck";
+      let rulesJson = explicitRulesJson || "";
 
       if (window.AndroidInterface) {
         try {
-          apiKey = window.AndroidInterface.getGeminiApiKey() || "";
-          const reqModel = window.AndroidInterface.getGeminiModel() || "";
-          voice = window.AndroidInterface.getGeminiVoice() || voice;
-          model = resolveLiveModel(reqModel);
+          if (!apiKey && window.AndroidInterface.getGeminiApiKey) apiKey = window.AndroidInterface.getGeminiApiKey();
+          if (!voice && window.AndroidInterface.getGeminiVoice) voice = window.AndroidInterface.getGeminiVoice();
+          if (!rulesJson && window.AndroidInterface.getLearnedRulesJson) rulesJson = window.AndroidInterface.getLearnedRulesJson();
         } catch(e) {
-          appendLog("Failed to read settings from AndroidInterface: " + e.message);
+          appendLog("Failed reading parameters from AndroidInterface: " + e.message);
         }
       }
 
       if (!apiKey) {
         alert("Please configure a valid Gemini API Key in Settings!");
-        if (window.AndroidInterface && window.AndroidInterface.showToast) {
-          window.AndroidInterface.showToast("Gemini API Key missing. Set in Settings tab.");
+        if (window.AndroidInterface && window.AndroidInterface.log) {
+          window.AndroidInterface.log("GEMINI_LIVE", "Gemini API Key missing. Please set it in Settings tab.", "ERROR");
         }
         return;
       }
 
       const selectEl = document.getElementById('liveModelSelect');
-      if (selectEl) {
-        selectEl.value = model;
-      }
+      if (selectEl) selectEl.value = model;
       document.getElementById('valModel').textContent = model.replace("gemini-", "").substring(0, 10);
       document.getElementById('valVoice').textContent = voice;
 
@@ -505,7 +548,7 @@
       setTranscript('System', 'Connecting to Gemini Live WebSocket Endpoint...', 'system');
       appendLog(`Initiating WebSocket connect to Gemini Live (Model: ${model}, Voice: ${voice})...`);
 
-      const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${apiKey}`;
+      const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${apiKey}`;
 
       try {
         lastPingTime = Date.now();
@@ -522,72 +565,87 @@
         document.getElementById('valLatency').textContent = latency + " ms";
         appendLog(`WebSocket connected (${latency}ms). Sending Bidi setup payload...`);
 
-        // Retrieve dynamic learned rules from native Android SharedPreferences
         let learnedRulesPrompt = "";
-        if (window.AndroidInterface && window.AndroidInterface.getLearnedRulesJson) {
-          try {
-            const rulesArray = JSON.parse(window.AndroidInterface.getLearnedRulesJson());
+        try {
+          if (rulesJson) {
+            const rulesArray = JSON.parse(rulesJson);
             if (rulesArray && rulesArray.length > 0) {
-              learnedRulesPrompt = "\nLEARNED REFLECTION RULES (MANDATORY):\n" + rulesArray.map((r, i) => `${i+1}. ${r}`).join("\n") + "\n";
+              learnedRulesPrompt = "\nHISTORICAL LEARNED RULES (MANDATORY):\n" + rulesArray.map((r, i) => `${i+1}. ${r}`).join("\n") + "\n";
             }
-          } catch(err) {
-            appendLog("Error parsing learned rules: " + err.message);
           }
+        } catch(err) {
+          appendLog("Error parsing learned rules: " + err.message);
         }
 
-        // Setup Instructions for 2Captcha visual solver
         const systemPrompt = `You are the autonomous 2Captcha Visual Solver & Action Controller.
-You analyze visual CAPTCHA puzzles on Android devices and trigger automated coordinate clicks, typing, and answer extraction.
+You operate in strict ROBOTIC MODE. NEVER output conversational small talk, filler, or explanations.
 
 CRITICAL DIRECTIVES:
-1. ZERO CONVERSATIONAL FILLER: Never output chit-chat, reasoning, or markdown. Output strictly inside <answer>...</answer> tags or call tools directly.
-2. NUMERAL TO DIGITS: "enter numeral in digits" -> 984.
-3. ARITHMETIC: "solve math" e.g. "26 + 6 =" -> 32.
-4. DICE COMBINATIONS: left to right sum/values -> 624.
-5. SHAPE ALIGNMENT: Letter above square/triangle -> match strictly left-to-right.
-6. SEQUENCE COMPLETION: Missing numbers -> calculate exact number.
-7. MULTI-FRAME: Merge alternating frame characters -> "MUAG6T".
+1. ROBOTIC EXECUTION ONLY: Speak strictly what is needed (under 4 words). Output directly via tools or <answer> tags.
+2. 2CAPTCHA AREA DETECTION: When entering the captcha working area, announce concisely: "Inside captcha area" and read the directive above the puzzle.
+3. RED ERROR CORRECTION / HINT DETECTION: If a red/orange banner appears above the captcha containing "Right answer is...", "Correct answer:", or "Your answer was wrong", immediately invoke the 'report_hint' tool with the exact correct value!
+4. SOLVING CAPTCHA CATEGORIES:
+   - TEXT & MATH CAPTCHAS: Read distorted text, numerals in words ("eight hundred" -> 800), and math equations ("26 + 6 = ?" -> 32). Call 'type_answer' tool immediately.
+   - ANIMATED & MOVING CAPTCHAS: Track moving characters drifting across sequential video frames from left to right, combine them, and call 'type_answer'.
+   - INTERACTIVE & PUZZLE CAPTCHAS: For coordinate matching (e.g. "Click on guitar", "Click in order 1,2,3"), calculate the center coordinate as percentage (0-100%) of width (X) and height (Y) and invoke 'click_coordinate'.
 ${learnedRulesPrompt}
-If you determine the CAPTCHA solution, call 'submit_captcha_answer' tool with the exact answer string and target bounding box.`;
+Be precise, extremely fast, and execute tool calls immediately.`;
 
-        // Tool function declarations for native coordination
         const tools = [
           {
-            function_declarations: [
+            functionDeclarations: [
               {
-                name: "submit_captcha_answer",
-                description: "Submits the solved 2Captcha answer and optional click coordinates to Android native automation.",
+                name: "type_answer",
+                description: "Types and submits a solved captcha alphanumeric text, arithmetic result, or reconstructed multi-frame sequence into the active input box.",
                 parameters: {
                   type: "OBJECT",
                   properties: {
-                    answer: {
+                    text: {
                       type: "STRING",
-                      description: "The exact predicted answer string or digits to type."
-                    },
-                    confidence: {
-                      type: "NUMBER",
-                      description: "Confidence score from 0.0 to 1.0"
-                    },
-                    clickX: {
-                      type: "NUMBER",
-                      description: "Target X coordinate pixel to tap"
-                    },
-                    clickY: {
-                      type: "NUMBER",
-                      description: "Target Y coordinate pixel to tap"
+                      description: "The exact clean characters or numbers to type."
                     }
                   },
-                  required: ["answer"]
+                  required: ["text"]
                 }
               },
               {
-                name: "request_screen_snapshot",
-                description: "Requests an immediate high-resolution screen capture frame from Android MediaProjection.",
+                name: "click_coordinate",
+                description: "Performs a hardware click gesture at target percentage coordinates for puzzle and shape-matching captchas.",
                 parameters: {
                   type: "OBJECT",
                   properties: {
-                    reason: { type: "STRING", description: "Reason for snapshot" }
-                  }
+                    x_percent: {
+                      type: "NUMBER",
+                      description: "Horizontal position from 0.0 to 100.0 percent across the screen."
+                    },
+                    y_percent: {
+                      type: "NUMBER",
+                      description: "Vertical position from 0.0 to 100.0 percent down the screen."
+                    }
+                  },
+                  required: ["x_percent", "y_percent"]
+                }
+              },
+              {
+                name: "report_hint",
+                description: "Reports an observed 2Captcha error correction banner to trigger autonomous self-learning.",
+                parameters: {
+                  type: "OBJECT",
+                  properties: {
+                    correct_answer: {
+                      type: "STRING",
+                      description: "The right answer specified by the 2Captcha red correction banner."
+                    },
+                    reason: {
+                      type: "STRING",
+                      description: "Brief rationale of why the mistake happened."
+                    },
+                    directive: {
+                      type: "STRING",
+                      description: "The directive or question text."
+                    }
+                  },
+                  required: ["correct_answer"]
                 }
               }
             ]
@@ -597,17 +655,17 @@ If you determine the CAPTCHA solution, call 'submit_captcha_answer' tool with th
         const setupPayload = {
           setup: {
             model: "models/" + model,
-            generation_config: {
-              response_modalities: ["AUDIO"],
-              speech_config: {
-                voice_config: {
-                  prebuilt_voice_config: {
-                    voice_name: voice
+            generationConfig: {
+              responseModalities: ["AUDIO", "TEXT"],
+              speechConfig: {
+                voiceConfig: {
+                  prebuiltVoiceConfig: {
+                    voiceName: voice
                   }
                 }
               }
             },
-            system_instruction: {
+            systemInstruction: {
               parts: [{ text: systemPrompt }]
             },
             tools: tools
@@ -615,7 +673,7 @@ If you determine the CAPTCHA solution, call 'submit_captcha_answer' tool with th
         };
 
         liveWs.send(JSON.stringify(setupPayload));
-        appendLog("Bidi setup configuration frame dispatched.");
+        appendLog("Bidi setup configuration frame dispatched to Gemini Live.");
       };
 
       liveWs.onmessage = async (event) => {
@@ -634,8 +692,8 @@ If you determine the CAPTCHA solution, call 'submit_captcha_answer' tool with th
             setTranscript('Gemini Live', 'Stream active & listening. Ready for 2Captcha visual automation.', 'gemini');
             appendLog("Gemini Live setupComplete confirmed. Initializing 16kHz audio capture...");
             initAudioCapture();
-            if (window.AndroidInterface && window.AndroidInterface.onLiveSessionStateChanged) {
-              window.AndroidInterface.onLiveSessionStateChanged(true);
+            if (window.AndroidInterface && window.AndroidInterface.log) {
+              window.AndroidInterface.log("GEMINI_LIVE", "Live session active and streaming.", "SYSTEM");
             }
             return;
           }
@@ -645,37 +703,33 @@ If you determine the CAPTCHA solution, call 'submit_captcha_answer' tool with th
             for (const call of payload.toolCall.functionCalls) {
               toolCallCount++;
               document.getElementById('valToolCalls').textContent = toolCallCount;
-              appendLog(`[TOOL_CALL] ${call.name} with args: ${JSON.stringify(call.args)}`);
+              appendLog(`[TOOL_CALL] ${call.name}: ${JSON.stringify(call.args)}`);
 
-              if (call.name === "submit_captcha_answer") {
-                const ans = call.args.answer;
-                const clickX = call.args.clickX || -1;
-                const clickY = call.args.clickY || -1;
-
-                if (window.AndroidInterface && window.AndroidInterface.onSubmitCaptchaAnswer) {
-                  window.AndroidInterface.onSubmitCaptchaAnswer(ans, clickX, clickY);
+              if (call.name === "type_answer") {
+                const ans = call.args.text;
+                setTranscript('Action: Type', ans, 'action');
+                if (window.AndroidInterface && window.AndroidInterface.onLiveAnswer) {
+                  window.AndroidInterface.onLiveAnswer(ans, 0, 0);
                 }
-
-                // Return tool response frame
-                if (liveWs && liveWs.readyState === WebSocket.OPEN) {
-                  const resp = {
-                    toolResponse: {
-                      functionResponses: [
-                        {
-                          id: call.id,
-                          response: {
-                            output: { success: true, message: `Answer '${ans}' dispatched to native input engine.` }
-                          }
-                        }
-                      ]
-                    }
-                  };
-                  liveWs.send(JSON.stringify(resp));
+                sendToolResponse(call.name, { status: "typing_dispatched" }, call.id);
+              } 
+              else if (call.name === "click_coordinate") {
+                const x = parseFloat(call.args.x_percent) || 50.0;
+                const y = parseFloat(call.args.y_percent) || 50.0;
+                setTranscript('Action: Click', `(${x.toFixed(1)}%, ${y.toFixed(1)}%)`, 'action');
+                if (window.AndroidInterface && window.AndroidInterface.onLiveClick) {
+                  window.AndroidInterface.onLiveClick(x, y);
                 }
-              } else if (call.name === "request_screen_snapshot") {
-                if (window.AndroidInterface && window.AndroidInterface.captureScreenSnapshot) {
-                  window.AndroidInterface.captureScreenSnapshot();
+                sendToolResponse(call.name, { status: "click_dispatched" }, call.id);
+              } 
+              else if (call.name === "report_hint") {
+                const corr = call.args.correct_answer || "";
+                const directive = call.args.directive || "";
+                setTranscript('Learned Hint', `Right: ${corr}`, 'system');
+                if (window.AndroidInterface && window.AndroidInterface.onLiveHint) {
+                  window.AndroidInterface.onLiveHint("", corr, directive);
                 }
+                sendToolResponse(call.name, { status: "hint_processed" }, call.id);
               }
             }
           }
@@ -694,10 +748,9 @@ If you determine the CAPTCHA solution, call 'submit_captcha_answer' tool with th
               for (const part of content.modelTurn.parts) {
                 if (part.text) {
                   appendTranscript(part.text);
-                  // Check if answer is inside <answer> tags
                   const match = part.text.match(/<answer>([\s\S]*?)<\/answer>/i);
-                  if (match && window.AndroidInterface && window.AndroidInterface.onSubmitCaptchaAnswer) {
-                    window.AndroidInterface.onSubmitCaptchaAnswer(match[1].trim(), -1, -1);
+                  if (match && window.AndroidInterface && window.AndroidInterface.onLiveAnswer) {
+                    window.AndroidInterface.onLiveAnswer(match[1].trim(), 0, 0);
                   }
                 }
                 if (part.inlineData && part.inlineData.data) {
@@ -721,6 +774,21 @@ If you determine the CAPTCHA solution, call 'submit_captcha_answer' tool with th
         appendLog("WebSocket error encountered.");
         disconnectLiveWebSocket();
       };
+    }
+
+    function sendToolResponse(name, responseObj, callId) {
+      if (!liveWs || liveWs.readyState !== WebSocket.OPEN) return;
+      const resp = {
+        toolResponse: {
+          functionResponses: [
+            {
+              id: callId || name,
+              response: { output: responseObj }
+            }
+          ]
+        }
+      };
+      liveWs.send(JSON.stringify(resp));
     }
 
     function disconnectLiveWebSocket() {
@@ -747,10 +815,6 @@ If you determine the CAPTCHA solution, call 'submit_captcha_answer' tool with th
       if (liveWs) {
         try { liveWs.close(); } catch(e) {}
         liveWs = null;
-      }
-
-      if (window.AndroidInterface && window.AndroidInterface.onLiveSessionStateChanged) {
-        window.AndroidInterface.onLiveSessionStateChanged(false);
       }
       appendLog("Live WebSocket disconnected cleanly.");
     }
@@ -783,10 +847,12 @@ If you determine the CAPTCHA solution, call 'submit_captcha_answer' tool with th
 
           liveWs.send(JSON.stringify({
             realtimeInput: {
-              audio: {
-                mimeType: "audio/pcm;rate=16000",
-                data: base64Audio
-              }
+              mediaChunks: [
+                {
+                  mimeType: "audio/pcm;rate=16000",
+                  data: base64Audio
+                }
+              ]
             }
           }));
         };
@@ -850,21 +916,40 @@ If you determine the CAPTCHA solution, call 'submit_captcha_answer' tool with th
       nextPlayTime = 0;
     }
 
-    // Called from native Android to inject frame image base64 directly into WebSocket stream
-    window.sendLiveFrame = function(base64Jpg) {
+    // Called from native Android ScreenCaptureService to inject live screen frames
+    window.injectScreenFrame = function(base64Jpg) {
+      if (!base64Jpg) return;
+      frameCount++;
+
+      const previewImg = document.getElementById("streamPreviewImg");
+      const placeholder = document.getElementById("noStreamPlaceholder");
+      const badge = document.getElementById("frameCounterBadge");
+
+      if (previewImg && placeholder) {
+        previewImg.src = `data:image/jpeg;base64,${base64Jpg}`;
+        previewImg.style.display = "block";
+        placeholder.style.display = "none";
+      }
+      if (badge) {
+        badge.textContent = `FRAME: ${frameCount}`;
+      }
+
       if (liveWs && liveWs.readyState === WebSocket.OPEN) {
         const framePacket = {
           realtimeInput: {
-            video: {
-              mimeType: "image/jpeg",
-              data: base64Jpg
-            }
+            mediaChunks: [
+              {
+                mimeType: "image/jpeg",
+                data: base64Jpg
+              }
+            ]
           }
         };
         liveWs.send(JSON.stringify(framePacket));
-        appendLog("Live screen frame injected into WebSocket stream.");
       }
     };
+
+    window.sendLiveFrame = window.injectScreenFrame;
 
     function sendFrameSample() {
       if (window.AndroidInterface && window.AndroidInterface.captureScreenSnapshot) {
@@ -875,7 +960,6 @@ If you determine the CAPTCHA solution, call 'submit_captcha_answer' tool with th
       }
     }
 
-    // Conversion utilities
     function base64ToArrayBuffer(base64) {
       const binaryString = window.atob(base64);
       const bytes = new Uint8Array(binaryString.length);
