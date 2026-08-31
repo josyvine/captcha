@@ -49,6 +49,9 @@ class CaptchaAccessibilityService : AccessibilityService() {
         // Callbacks
         var onErrorCorrectionDetected: ((wrongGuess: String, correctAnswer: String, directive: String) -> Unit)? = null
         var onInputNodeFound: ((bounds: Rect) -> Unit)? = null
+        
+        // Safety guard: only allow automated interactions when target captcha context is active
+        var isSolvingActive: Boolean = false
     }
 
     /**
@@ -106,7 +109,11 @@ class CaptchaAccessibilityService : AccessibilityService() {
 
         try {
             val root = rootInActiveWindow ?: return
-            inspectNodes(root)
+            
+            // Safety filter: ensure window contains captcha or 2captcha keywords before scanning for errors
+            if (isCaptchaContext(root)) {
+                inspectNodes(root)
+            }
         } catch (_: Exception) {
             // Suppressed to prevent crashes on recycled transient nodes
         }
@@ -114,6 +121,33 @@ class CaptchaAccessibilityService : AccessibilityService() {
 
     override fun onInterrupt() {
         Logger.log("ACCESSIBILITY", "Accessibility Service interrupted.", LogLevel.ACCESSIBILITY)
+    }
+
+    /**
+     * Verifies that the active window hierarchy belongs to a Captcha task area
+     */
+    private fun isCaptchaContext(node: AccessibilityNodeInfo): Boolean {
+        val text = node.text?.toString() ?: ""
+        val desc = node.contentDescription?.toString() ?: ""
+        val hint = node.hintText?.toString() ?: ""
+        val combined = "$text $desc $hint".lowercase()
+
+        if (combined.contains("2captcha") ||
+            combined.contains("play-and-earn") ||
+            combined.contains("solve math") ||
+            combined.contains("numeral in digits") ||
+            combined.contains("enter numeral") ||
+            combined.contains("letter pairs") ||
+            combined.contains("above the square")
+        ) {
+            return true
+        }
+
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            if (isCaptchaContext(child)) return true
+        }
+        return false
     }
 
     /**
@@ -135,7 +169,7 @@ class CaptchaAccessibilityService : AccessibilityService() {
             val matcher = pattern.matcher(combined)
             if (matcher.find()) {
                 val correctAnswer = matcher.group(1)?.trim() ?: ""
-                if (correctAnswer.isNotBlank()) {
+                if (correctAnswer.isNotBlank() && correctAnswer.length < 30) {
                     Logger.log("LEARNING", "Red correction banner detected! Correct value: '$correctAnswer'", LogLevel.LEARNING)
                     onErrorCorrectionDetected?.invoke("PreviousGuess", correctAnswer, "2Captcha Auto Scrape")
                 }
