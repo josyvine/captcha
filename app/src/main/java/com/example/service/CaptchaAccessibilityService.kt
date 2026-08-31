@@ -49,8 +49,8 @@ class CaptchaAccessibilityService : AccessibilityService() {
         // Callbacks
         var onErrorCorrectionDetected: ((wrongGuess: String, correctAnswer: String, directive: String) -> Unit)? = null
         var onInputNodeFound: ((bounds: Rect) -> Unit)? = null
-        
-        // Safety guard: only allow automated interactions when target captcha context is active
+
+        // STRICT MASTER SWITCH: Only allows automated scanning & clicks when solving is explicitly active in 2Captcha
         var isSolvingActive: Boolean = false
     }
 
@@ -100,6 +100,7 @@ class CaptchaAccessibilityService : AccessibilityService() {
 
     override fun onUnbind(intent: android.content.Intent?): Boolean {
         instance = null
+        isSolvingActive = false
         Logger.log("ACCESSIBILITY", "Captcha Accessibility Service unbound.", LogLevel.ACCESSIBILITY)
         return super.onUnbind(intent)
     }
@@ -107,11 +108,18 @@ class CaptchaAccessibilityService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
 
+        // Safety Filter 1: If auto-solving is not actively engaged, stay 100% idle
+        if (!isSolvingActive) return
+
+        // Safety Filter 2: Ignore keyboard and system UI packages
+        val pkg = event.packageName?.toString() ?: ""
+        if (pkg.contains("inputmethod") || pkg.contains("keyboard") || pkg.contains("systemui")) {
+            return
+        }
+
         try {
             val root = rootInActiveWindow ?: return
-            
-            // Safety filter: ensure window contains captcha or 2captcha keywords before scanning for errors
-            if (isCaptchaContext(root)) {
+            if (isStrict2CaptchaScreen(root)) {
                 inspectNodes(root)
             }
         } catch (_: Exception) {
@@ -120,38 +128,34 @@ class CaptchaAccessibilityService : AccessibilityService() {
     }
 
     override fun onInterrupt() {
+        isSolvingActive = false
         Logger.log("ACCESSIBILITY", "Accessibility Service interrupted.", LogLevel.ACCESSIBILITY)
     }
 
     /**
-     * Verifies that the active window hierarchy belongs to a Captcha task area
+     * Strict check ensuring the active screen is a real 2Captcha task container
      */
-    private fun isCaptchaContext(node: AccessibilityNodeInfo): Boolean {
+    private fun isStrict2CaptchaScreen(node: AccessibilityNodeInfo): Boolean {
         val text = node.text?.toString() ?: ""
         val desc = node.contentDescription?.toString() ?: ""
-        val hint = node.hintText?.toString() ?: ""
-        val combined = "$text $desc $hint".lowercase()
+        val combined = "$text $desc".lowercase()
 
-        if (combined.contains("2captcha") ||
+        if (combined.contains("2captcha.com") ||
             combined.contains("play-and-earn") ||
-            combined.contains("solve math") ||
-            combined.contains("numeral in digits") ||
-            combined.contains("enter numeral") ||
-            combined.contains("letter pairs") ||
-            combined.contains("above the square")
+            (combined.contains("2captcha") && combined.contains("balance"))
         ) {
             return true
         }
 
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
-            if (isCaptchaContext(child)) return true
+            if (isStrict2CaptchaScreen(child)) return true
         }
         return false
     }
 
     /**
-     * Inspects active window hierarchy for red error correction banners and input targets
+     * Inspects active window hierarchy for real 2Captcha red error correction banners
      */
     private fun inspectNodes(node: AccessibilityNodeInfo) {
         val text = node.text?.toString() ?: ""
@@ -159,33 +163,32 @@ class CaptchaAccessibilityService : AccessibilityService() {
         val hint = node.hintText?.toString() ?: ""
         val combined = "$text $contentDesc $hint"
 
-        // 1. Detect 2Captcha red error correction banners (e.g. "Correct answer: 984", "Right answer is: X")
+        // Detect actual 2Captcha error correction banners
         if (combined.contains("Correct answer:", ignoreCase = true) ||
-            combined.contains("Right answer:", ignoreCase = true) ||
-            combined.contains("Right answer is", ignoreCase = true) ||
+            combined.contains("Right answer is:", ignoreCase = true) ||
             combined.contains("Правильный ответ:", ignoreCase = true)
         ) {
-            val pattern = Pattern.compile("(?:Correct|Right)\\s+answer\\s*(?:is)?:?\\s*\\[?([^\\]\\n,]+)\\]?", Pattern.CASE_INSENSITIVE)
+            val pattern = Pattern.compile("(?:Correct\\s+answer:|Right\\s+answer\\s+is:)\\s*\\[?([^\\]\\n,]{1,25})\\]?", Pattern.CASE_INSENSITIVE)
             val matcher = pattern.matcher(combined)
             if (matcher.find()) {
                 val correctAnswer = matcher.group(1)?.trim() ?: ""
-                if (correctAnswer.isNotBlank() && correctAnswer.length < 30) {
-                    Logger.log("LEARNING", "Red correction banner detected! Correct value: '$correctAnswer'", LogLevel.LEARNING)
-                    onErrorCorrectionDetected?.invoke("PreviousGuess", correctAnswer, "2Captcha Auto Scrape")
+                if (correctAnswer.isNotBlank()) {
+                    Logger.log("LEARNING", "2Captcha correction banner detected! Correct: '$correctAnswer'", LogLevel.LEARNING)
+                    onErrorCorrectionDetected?.invoke("PreviousGuess", correctAnswer, "2Captcha Task")
                 }
             }
         }
 
-        // 2. Detect input fields
-        if (node.isEditable || node.className?.contains("EditText", ignoreCase = true) == true ||
-            node.hintText?.toString()?.contains("captcha", ignoreCase = true) == true
-        ) {
+        // Detect captcha input fields
+        if (node.isEditable && (
+            combined.contains("captcha", ignoreCase = true) ||
+            node.className?.contains("EditText", ignoreCase = true) == true
+        )) {
             val bounds = Rect()
             node.getBoundsInScreen(bounds)
             onInputNodeFound?.invoke(bounds)
         }
 
-        // Recursively inspect children
         for (i in 0 until node.childCount) {
             val child = node.getChild(i)
             if (child != null) {
@@ -313,7 +316,7 @@ class CaptchaAccessibilityService : AccessibilityService() {
         serviceScope.launch {
             Logger.log("ACCESSIBILITY", "Initiating organic typing for \"$textToType\"...", LogLevel.ACCESSIBILITY)
 
-            // Focus active input field if found
+            // Focus active input field
             findAndFocusInputField(targetInputBounds, telemetry)
             delay(150)
 
@@ -328,7 +331,7 @@ class CaptchaAccessibilityService : AccessibilityService() {
                     val typoChar = getAdjacentQwertyChar(targetChar)
                     currentBuffer.append(typoChar)
                     applyTextToActiveFocus(currentBuffer.toString())
-                    Logger.log("ACCESSIBILITY", "Humanized Typo triggered: '$typoChar' (Reaction pause 90ms)...", LogLevel.ACCESSIBILITY)
+                    Logger.log("ACCESSIBILITY", "Humanized Typo triggered: '$typoChar'...", LogLevel.ACCESSIBILITY)
 
                     delay(90)
                     currentBuffer.deleteCharAt(currentBuffer.length - 1)
@@ -351,14 +354,12 @@ class CaptchaAccessibilityService : AccessibilityService() {
                     val hesitation = telemetry.hesitationMinMs + random.nextInt(
                         maxOf(1, telemetry.hesitationMaxMs - telemetry.hesitationMinMs)
                     )
-                    Logger.log("ACCESSIBILITY", "Cognitive hesitation pause: ${hesitation}ms", LogLevel.ACCESSIBILITY)
                     delay(hesitation.toLong())
                 }
             }
 
             // Post-typing reaction delay
             val submitDelay = 150 + random.nextInt(150)
-            Logger.log("ACCESSIBILITY", "Typing complete for '$textToType'. Post-typing pause: ${submitDelay}ms", LogLevel.ACCESSIBILITY)
             delay(submitDelay.toLong())
 
             // Automatically trigger submit button click
@@ -388,9 +389,7 @@ class CaptchaAccessibilityService : AccessibilityService() {
     }
 
     private fun findFirstInputNode(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
-        if (node.isEditable || node.className?.contains("EditText", ignoreCase = true) == true ||
-            node.hintText?.toString()?.contains("captcha", ignoreCase = true) == true
-        ) {
+        if (node.isEditable || node.className?.contains("EditText", ignoreCase = true) == true) {
             return node
         }
         for (i in 0 until node.childCount) {
@@ -428,32 +427,6 @@ class CaptchaAccessibilityService : AccessibilityService() {
         } catch (e: Exception) {
             Logger.log("ACCESSIBILITY", "Submit node search: ${e.message}", LogLevel.INFO)
         }
-
-        // Fallback: Dispatch tap at typical 2Captcha green check button location (approx X=70% width, Y=38% height)
-        val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-        val screenW: Int
-        val screenH: Int
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            val bounds = wm.currentWindowMetrics.bounds
-            screenW = bounds.width().coerceAtLeast(720)
-            screenH = bounds.height().coerceAtLeast(1280)
-        } else {
-            val metrics = DisplayMetrics()
-            @Suppress("DEPRECATION")
-            wm.defaultDisplay.getMetrics(metrics)
-            screenW = if (metrics.widthPixels > 0) metrics.widthPixels else 1080
-            screenH = if (metrics.heightPixels > 0) metrics.heightPixels else 2400
-        }
-
-        val submitBounds = Rect(
-            (screenW * 0.55f).toInt(),
-            (screenH * 0.30f).toInt(),
-            (screenW * 0.90f).toInt(),
-            (screenH * 0.40f).toInt()
-        )
-        Logger.log("ACCESSIBILITY", "Tapping 2Captcha submit button at coordinates...", LogLevel.ACCESSIBILITY)
-        performHumanizedTap(submitBounds, telemetry)
     }
 
     private fun findSubmitNode(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
