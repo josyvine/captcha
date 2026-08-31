@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">2Captcha Solver</string>
+    <string name="accessibility_service_description">Autonomous visual interaction service for solving 2Captcha puzzles with humanized touch emulation.</string>
+</resources>
