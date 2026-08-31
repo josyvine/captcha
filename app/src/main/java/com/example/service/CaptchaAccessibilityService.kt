@@ -13,7 +13,6 @@ import android.view.Display
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
-import androidx.annotation.RequiresApi
 import com.example.model.HumanTelemetryConfig
 import com.example.model.LogLevel
 import com.example.util.Logger
@@ -109,7 +108,7 @@ class CaptchaAccessibilityService : AccessibilityService() {
             val root = rootInActiveWindow ?: return
             inspectNodes(root)
         } catch (_: Exception) {
-            // Ignored to avoid crashing on transient node recycling
+            // Suppressed to prevent crashes on recycled transient nodes
         }
     }
 
@@ -118,69 +117,35 @@ class CaptchaAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * Captures an instant hardware screenshot of the live device screen (Android 11+)
-     */
-    suspend fun captureLiveScreenshot(): Bitmap? {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-            return null
-        }
-
-        return suspendCancellableCoroutine { continuation ->
-            try {
-                takeScreenshot(
-                    Display.DEFAULT_DISPLAY,
-                    applicationContext.mainExecutor,
-                    object : TakeScreenshotCallback {
-                        override fun onSuccess(screenshot: ScreenshotResult) {
-                            try {
-                                val hardwareBuffer = screenshot.hardwareBuffer
-                                val colorSpace = screenshot.colorSpace
-                                val bitmap = Bitmap.wrapHardwareBuffer(hardwareBuffer, colorSpace)
-                                    ?.copy(Bitmap.Config.ARGB_8888, true)
-                                hardwareBuffer.close()
-                                Logger.log("ACCESSIBILITY", "Captured live screen frame (${bitmap?.width}x${bitmap?.height}) via Accessibility API.", LogLevel.VISION)
-                                continuation.resume(bitmap)
-                            } catch (e: Exception) {
-                                Logger.log("ACCESSIBILITY", "Screenshot processing error: ${e.message}", LogLevel.ERROR)
-                                continuation.resume(null)
-                            }
-                        }
-
-                        override fun onFailure(errorCode: Int) {
-                            Logger.log("ACCESSIBILITY", "Accessibility takeScreenshot failed (code: $errorCode).", LogLevel.ERROR)
-                            continuation.resume(null)
-                        }
-                    }
-                )
-            } catch (e: Exception) {
-                Logger.log("ACCESSIBILITY", "Screenshot dispatch exception: ${e.message}", LogLevel.ERROR)
-                continuation.resume(null)
-            }
-        }
-    }
-
-    /**
      * Inspects active window hierarchy for red error correction banners and input targets
      */
     private fun inspectNodes(node: AccessibilityNodeInfo) {
         val text = node.text?.toString() ?: ""
         val contentDesc = node.contentDescription?.toString() ?: ""
-        val combined = "$text $contentDesc"
+        val hint = node.hintText?.toString() ?: ""
+        val combined = "$text $contentDesc $hint"
 
-        // 1. Detect 2Captcha red error correction banners e.g. "Correct answer: 984" or "Correct answer: [X]"
-        if (combined.contains("Correct answer:", ignoreCase = true) || combined.contains("Right answer:", ignoreCase = true)) {
-            val pattern = Pattern.compile("(?:Correct|Right)\\s+answer:\\s*\\[?([^\\]\\n,]+)\\]?", Pattern.CASE_INSENSITIVE)
+        // 1. Detect 2Captcha red error correction banners (e.g. "Correct answer: 984", "Right answer is: X")
+        if (combined.contains("Correct answer:", ignoreCase = true) ||
+            combined.contains("Right answer:", ignoreCase = true) ||
+            combined.contains("Right answer is", ignoreCase = true) ||
+            combined.contains("Правильный ответ:", ignoreCase = true)
+        ) {
+            val pattern = Pattern.compile("(?:Correct|Right)\\s+answer\\s*(?:is)?:?\\s*\\[?([^\\]\\n,]+)\\]?", Pattern.CASE_INSENSITIVE)
             val matcher = pattern.matcher(combined)
             if (matcher.find()) {
                 val correctAnswer = matcher.group(1)?.trim() ?: ""
-                Logger.log("LEARNING", "Red correction banner detected! Correct: '$correctAnswer'", LogLevel.LEARNING)
-                onErrorCorrectionDetected?.invoke("PreviousGuess", correctAnswer, "2Captcha Auto Scrape")
+                if (correctAnswer.isNotBlank()) {
+                    Logger.log("LEARNING", "Red correction banner detected! Correct value: '$correctAnswer'", LogLevel.LEARNING)
+                    onErrorCorrectionDetected?.invoke("PreviousGuess", correctAnswer, "2Captcha Auto Scrape")
+                }
             }
         }
 
         // 2. Detect input fields
         if (node.isEditable || node.className?.contains("EditText", ignoreCase = true) == true ||
-            node.hintText?.toString()?.contains("captcha", ignoreCase = true) == true) {
+            node.hintText?.toString()?.contains("captcha", ignoreCase = true) == true
+        ) {
             val bounds = Rect()
             node.getBoundsInScreen(bounds)
             onInputNodeFound?.invoke(bounds)
@@ -196,7 +161,71 @@ class CaptchaAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * Dispatches native hardware touch gesture to target coordinates with humanized hold physics
+     * Dispatches hardware click gesture at target percentage coordinates (0.0% to 100.0%) for puzzle matching
+     */
+    fun performCoordinateTap(
+        xPercent: Float,
+        yPercent: Float,
+        telemetry: HumanTelemetryConfig = HumanTelemetryConfig(),
+        onComplete: (() -> Unit)? = null
+    ) {
+        val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        val screenW: Int
+        val screenH: Int
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val bounds = wm.currentWindowMetrics.bounds
+            screenW = bounds.width().coerceAtLeast(720)
+            screenH = bounds.height().coerceAtLeast(1280)
+        } else {
+            val metrics = DisplayMetrics()
+            @Suppress("DEPRECATION")
+            wm.defaultDisplay.getMetrics(metrics)
+            screenW = if (metrics.widthPixels > 0) metrics.widthPixels else 1080
+            screenH = if (metrics.heightPixels > 0) metrics.heightPixels else 2400
+        }
+
+        val clampedX = xPercent.coerceIn(2.0f, 98.0f)
+        val clampedY = yPercent.coerceIn(2.0f, 98.0f)
+
+        val targetX = (screenW * (clampedX / 100.0f))
+        val targetY = (screenH * (clampedY / 100.0f))
+
+        // Jitter simulation for natural human click
+        val jitterX = (random.nextFloat() - 0.5f) * 6f
+        val jitterY = (random.nextFloat() - 0.5f) * 6f
+        val finalX = targetX + jitterX
+        val finalY = targetY + jitterY
+
+        val holdDuration = telemetry.touchHoldMinMs + random.nextInt(
+            maxOf(1, (telemetry.touchHoldMaxMs - telemetry.touchHoldMinMs).toInt())
+        )
+
+        val path = Path().apply {
+            moveTo(finalX, finalY)
+        }
+
+        val stroke = GestureDescription.StrokeDescription(path, 0, holdDuration)
+        val gesture = GestureDescription.Builder().addStroke(stroke).build()
+
+        Logger.log("ACCESSIBILITY", "Puzzle Click dispatched at ($finalX, $finalY) [${clampedX.toInt()}%, ${clampedY.toInt()}%] (${holdDuration}ms hold).", LogLevel.ACCESSIBILITY)
+
+        dispatchGesture(gesture, object : GestureResultCallback() {
+            override fun onCompleted(gestureDescription: GestureDescription?) {
+                super.onCompleted(gestureDescription)
+                Logger.log("ACCESSIBILITY", "Coordinate tap completed successfully.", LogLevel.ACCESSIBILITY)
+                onComplete?.invoke()
+            }
+
+            override fun onCancelled(gestureDescription: GestureDescription?) {
+                super.onCancelled(gestureDescription)
+                Logger.log("ACCESSIBILITY", "Coordinate tap gesture cancelled by system.", LogLevel.ERROR)
+            }
+        }, null)
+    }
+
+    /**
+     * Dispatches native hardware touch gesture to target bounds with humanized hold physics
      */
     fun performHumanizedTap(
         targetBounds: Rect,
@@ -326,7 +355,8 @@ class CaptchaAccessibilityService : AccessibilityService() {
 
     private fun findFirstInputNode(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
         if (node.isEditable || node.className?.contains("EditText", ignoreCase = true) == true ||
-            node.hintText?.toString()?.contains("captcha", ignoreCase = true) == true) {
+            node.hintText?.toString()?.contains("captcha", ignoreCase = true) == true
+        ) {
             return node
         }
         for (i in 0 until node.childCount) {
@@ -344,7 +374,6 @@ class CaptchaAccessibilityService : AccessibilityService() {
         try {
             val root = rootInActiveWindow
             if (root != null) {
-                // Try finding clickable button node with submit keywords or check icon
                 val submitNode = findSubmitNode(root)
                 if (submitNode != null) {
                     val bounds = Rect()
@@ -355,7 +384,6 @@ class CaptchaAccessibilityService : AccessibilityService() {
                     return
                 }
 
-                // If input node is focused, perform IME Enter or click
                 val focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
                 if (focused != null) {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -369,11 +397,20 @@ class CaptchaAccessibilityService : AccessibilityService() {
 
         // Fallback: Dispatch tap at typical 2Captcha green check button location (approx X=70% width, Y=38% height)
         val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-        val metrics = DisplayMetrics()
-        @Suppress("DEPRECATION")
-        wm.defaultDisplay.getMetrics(metrics)
-        val screenW = if (metrics.widthPixels > 0) metrics.widthPixels else 1080
-        val screenH = if (metrics.heightPixels > 0) metrics.heightPixels else 2400
+        val screenW: Int
+        val screenH: Int
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val bounds = wm.currentWindowMetrics.bounds
+            screenW = bounds.width().coerceAtLeast(720)
+            screenH = bounds.height().coerceAtLeast(1280)
+        } else {
+            val metrics = DisplayMetrics()
+            @Suppress("DEPRECATION")
+            wm.defaultDisplay.getMetrics(metrics)
+            screenW = if (metrics.widthPixels > 0) metrics.widthPixels else 1080
+            screenH = if (metrics.heightPixels > 0) metrics.heightPixels else 2400
+        }
 
         val submitBounds = Rect(
             (screenW * 0.55f).toInt(),
