@@ -20,7 +20,7 @@ class SelfLearningEngine(
 
     init {
         // Wire up listener to accessibility service
-        CaptchaAccessibilityService.onErrorCorrectionDetected紧 = { wrongGuess, correctAnswer, directive ->
+        CaptchaAccessibilityService.onErrorCorrectionDetected = { wrongGuess, correctAnswer, directive ->
             handleErrorCorrection(wrongGuess, correctAnswer, directive)
         }
     }
@@ -48,11 +48,11 @@ class SelfLearningEngine(
             Logger.log("LEARNING", "Autonomous Self-Learning triggered for correction: '$cleanCorrect' (Directive: $directive)", LogLevel.LEARNING)
 
             // 1. Instant Auto-Recovery: Humanized Typing & Submission of the correct answer
-            val accessibility direct = CaptchaAccessibilityService.instance
-            if (direct != null) {
+            val accessibility = CaptchaAccessibilityService.instance
+            if (accessibility != null) {
                 delay(200)
-                direct.performOrganicTyping(
-                    textToType direct = cleanCorrect,
+                accessibility.performOrganicTyping(
+                    textToType = cleanCorrect,
                     targetInputBounds = null,
                     telemetry = prefs.getHumanTelemetry()
                 ) {
