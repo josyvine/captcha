@@ -69,9 +69,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _availableModels = MutableStateFlow<List<String>>(
         listOf(
-            "gemini-3.5-flash",
-            "gemini-3.1-flash-lite-preview",
-            "gemini-3.1-pro-preview",
+            "gemini-2.5-flash",
+            "gemini-2.0-flash",
+            "gemini-1.5-flash",
+            "gemini-1.5-pro",
             "gemini-3.1-flash-live-preview",
             "gemini-2.5-flash-native-audio-preview-12-2025",
             "gemini-2.0-flash-exp"
@@ -105,7 +106,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var sessionStartTime = SystemClock.elapsedRealtime()
 
     init {
-        // Recover and display previous crash report if any
+        // Recover and display previous session crash report if recorded
         prefs.getLastCrashReport()?.let { report ->
             Logger.log("CRASH", "PREVIOUS APP CRASH DETECTED:\n$report", LogLevel.ERROR)
             prefs.clearCrashReport()
@@ -162,18 +163,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        // Hook Error correction banner detection
+        // Hook Error correction banner detection from Accessibility
         CaptchaAccessibilityService.onErrorCorrectionDetected = { wrong, correct, directive ->
-            viewModelScope.launch {
-                learningEngine.handleErrorCorrection(wrong, correct, directive)
-                _learnedRules.value = prefs.getLearnedRules()
-            }
+            handleErrorCorrection(wrong, correct, directive)
         }
     }
 
     fun handleErrorCorrection(wrongGuess: String, correctAnswer: String, directive: String) {
-        learningEngine.handleErrorCorrection(wrongGuess, correctAnswer, directive)
-        _learnedRules.value = prefs.getLearnedRules()
+        viewModelScope.launch {
+            learningEngine.handleErrorCorrection(wrongGuess, correctAnswer, directive)
+            delay(400)
+            _learnedRules.value = prefs.getLearnedRules()
+        }
     }
 
     private fun startSessionTimer() {
@@ -436,8 +437,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 targetInputBounds = null,
                 telemetry = _humanTelemetry.value
             ) {
-                FloatingHudService.hudStatus.value = HudStatus.SUBMITTING
-                FloatingHudService.hudStatus.value = HudStatus.STANDBY
+                viewModelScope.launch {
+                    FloatingHudService.hudStatus.value = HudStatus.SUBMITTING
+                    delay(500)
+                    FloatingHudService.hudStatus.value = HudStatus.STANDBY
+                }
+            }
+        }
+    }
+
+    fun onLiveClickReceived(xPercent: Float, yPercent: Float) {
+        FloatingHudService.marqueeLog.value = "Puzzle Tap: (${xPercent.toInt()}%, ${yPercent.toInt()}%)"
+        FloatingHudService.hudStatus.value = HudStatus.TYPING
+
+        prefs.recordAttempt(solved = true, latencyMs = 280L)
+        updateTelemetryFromPrefs()
+
+        val accessibility = CaptchaAccessibilityService.instance
+        if (accessibility != null) {
+            accessibility.performCoordinateTap(
+                xPercent = xPercent,
+                yPercent = yPercent,
+                telemetry = _humanTelemetry.value
+            ) {
+                viewModelScope.launch {
+                    delay(300)
+                    FloatingHudService.hudStatus.value = HudStatus.STANDBY
+                }
             }
         }
     }
