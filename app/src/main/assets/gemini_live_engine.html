@@ -1,0 +1,898 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>2Captcha Gemini Live Engine</title>
+  <style>
+    :root {
+      --bg-dark: #090D16;
+      --card-bg: rgba(15, 23, 42, 0.94);
+      --accent-cyan: #00F0FF;
+      --accent-green: #00FF66;
+      --accent-amber: #FFB800;
+      --accent-red: #FF3366;
+      --text-muted: #94A3B8;
+      --border-glow: rgba(0, 240, 255, 0.25);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg-dark);
+      color: #F8FAFC;
+      width: 100%;
+      min-height: 100vh;
+      overflow-x: hidden;
+      padding: 8px 6px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .glass-card {
+      background: var(--card-bg);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--border-glow);
+      border-radius: 12px;
+      padding: 10px 12px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
+    }
+
+    .header-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+    }
+
+    .title-badge {
+      font-size: 13px;
+      font-weight: 800;
+      color: var(--accent-cyan);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      letter-spacing: 0.5px;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--text-muted);
+      box-shadow: 0 0 6px rgba(148, 163, 184, 0.5);
+      transition: all 0.3s ease;
+    }
+
+    .status-dot.active {
+      background: var(--accent-green);
+      box-shadow: 0 0 10px var(--accent-green);
+      animation: pulseGlow 1.5s infinite;
+    }
+
+    .status-dot.connecting {
+      background: var(--accent-amber);
+      box-shadow: 0 0 10px var(--accent-amber);
+    }
+
+    @keyframes pulseGlow {
+      0%, 100% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(1.2); opacity: 0.7; }
+    }
+
+    /* Live Controls Grid */
+    .controls-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .btn {
+      background: #1E293B;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      color: #FFF;
+      padding: 9px 10px;
+      border-radius: 8px;
+      font-weight: 700;
+      font-size: 12px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: all 0.2s ease;
+    }
+
+    .btn:active {
+      transform: scale(0.97);
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #0284C7, #0369A1);
+      border-color: var(--accent-cyan);
+      box-shadow: 0 4px 15px rgba(2, 132, 199, 0.3);
+    }
+
+    .btn-danger {
+      background: linear-gradient(135deg, #E11D48, #BE123C);
+      border-color: var(--accent-red);
+    }
+
+    .btn-sparkle {
+      grid-column: span 2;
+      background: linear-gradient(135deg, #1E1B4B, #312E81);
+      border: 1px solid #818CF8;
+      color: #C7D2FE;
+      position: relative;
+      overflow: hidden;
+    }
+
+    /* Puter Sparkle Indicator */
+    .sparkle-icon {
+      font-size: 16px;
+      color: #A5B4FC;
+      display: inline-block;
+    }
+
+    .sparkle-active .sparkle-icon {
+      animation: sparklePulse 1.2s infinite ease-in-out, hueShift 3s infinite linear;
+    }
+
+    @keyframes sparklePulse {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.25); }
+    }
+
+    @keyframes hueShift {
+      0% { filter: hue-rotate(0deg); }
+      100% { filter: hue-rotate(360deg); }
+    }
+
+    /* Live Transcript Feed */
+    .transcript-box {
+      background: #020617;
+      border: 1px solid #1E293B;
+      border-radius: 8px;
+      padding: 10px;
+      min-height: 90px;
+      max-height: 180px;
+      overflow-y: auto;
+      font-size: 12px;
+      line-height: 1.4;
+      color: #E2E8F0;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .speaker-label {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 2px;
+    }
+
+    .speaker-label.gemini { color: var(--accent-cyan); }
+    .speaker-label.system { color: var(--accent-amber); }
+    .speaker-label.error { color: var(--accent-red); }
+
+    /* Telemetry Metrics */
+    .metrics-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-around;
+      background: #020617;
+      border: 1px solid #1E293B;
+      border-radius: 8px;
+      padding: 6px 4px;
+    }
+
+    .metric-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1px;
+    }
+
+    .metric-val {
+      font-size: 13px;
+      font-weight: 700;
+      font-family: monospace;
+      color: var(--accent-green);
+    }
+
+    .metric-lbl {
+      font-size: 9px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+    }
+
+    /* Embedded Terminal */
+    .terminal-container {
+      background: #000000;
+      border: 1px solid rgba(0, 255, 102, 0.4);
+      border-radius: 8px;
+      padding: 8px;
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 10px;
+      color: #00FF66;
+      height: 110px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    .terminal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 4px;
+      font-size: 11px;
+      font-weight: bold;
+      color: #00FF66;
+      border-bottom: 1px solid rgba(0, 255, 102, 0.3);
+      padding-bottom: 3px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Status & Connection Card -->
+  <div class="glass-card">
+    <div class="header-row">
+      <div class="title-badge">
+        <div class="status-dot" id="wsStatusDot"></div>
+        <span>GEMINI LIVE WEBSOCKET ENGINE</span>
+      </div>
+      <span id="wsStatusText" style="font-size: 11px; font-weight: 600; color: var(--text-muted); font-family: monospace;">DISCONNECTED</span>
+    </div>
+
+    <div class="metrics-bar" style="margin-top: 10px;">
+      <div class="metric-item">
+        <span class="metric-val" id="valLatency">-- ms</span>
+        <span class="metric-lbl">Latency</span>
+      </div>
+      <div class="metric-item">
+        <span class="metric-val" id="valModel">3.1-Live</span>
+        <span class="metric-lbl">Model</span>
+      </div>
+      <div class="metric-item">
+        <span class="metric-val" id="valVoice">Puck</span>
+        <span class="metric-lbl">Live Voice</span>
+      </div>
+      <div class="metric-item">
+        <span class="metric-val" id="valToolCalls">0</span>
+        <span class="metric-lbl">Tool Hits</span>
+      </div>
+    </div>
+
+    <!-- Live Model Selector -->
+    <div style="margin-top: 8px; display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+      <span style="font-size: 11px; font-weight: bold; color: var(--text-muted);">STREAM MODEL:</span>
+      <select id="liveModelSelect" onchange="onLiveModelChange(this.value)" style="background: #0F172A; border: 1px solid var(--border-glow); color: var(--accent-cyan); padding: 5px 8px; border-radius: 6px; font-size: 11px; font-weight: bold; outline: none; flex: 1;">
+        <option value="gemini-3.1-flash-live-preview" selected>Gemini 3.1 Flash Live Preview</option>
+        <option value="gemini-2.5-flash-native-audio-preview-12-2025">Gemini 2.5 Flash Native Audio</option>
+        <option value="gemini-2.0-flash-exp">Gemini 2.0 Flash Exp (Live)</option>
+      </select>
+    </div>
+
+    <div class="controls-grid">
+      <button class="btn btn-sparkle" id="btnLiveToggle" onclick="toggleLiveWebSocket()">
+        <span class="sparkle-icon" id="sparkleIcon">✦</span>
+        <span id="btnLiveText">Start Gemini Live Stream</span>
+      </button>
+
+      <button class="btn btn-primary" onclick="sendFrameSample()">
+        <span>📸 Stream Target Frame</span>
+      </button>
+      <button class="btn" onclick="clearLiveLogs()">
+        <span>🗑️ Clear Stream</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Real-Time Dialogue / Live Feed Card -->
+  <div class="glass-card">
+    <div class="header-row" style="margin-bottom: 8px;">
+      <span style="font-size: 13px; font-weight: 700; color: var(--accent-cyan);">LIVE ASSISTANT STREAM</span>
+      <span style="font-size: 11px; color: var(--text-muted);">16kHz PCM In / 24kHz Out</span>
+    </div>
+    <div class="transcript-box" id="transcriptBox">
+      <div class="speaker-label system">System</div>
+      <div>Standby. Tap "Start Gemini Live Stream" or activate via Main Dashboard.</div>
+    </div>
+  </div>
+
+  <!-- Embedded Live Terminal Log -->
+  <div class="glass-card" style="padding: 10px;">
+    <div class="terminal-header">
+      <span>WEBVIEW BRIDGE TERMINAL</span>
+      <button onclick="copyLogsToAndroid()" style="background: none; border: none; color: #00FF66; cursor: pointer; font-size: 11px; font-weight: bold;">[COPY LOGS]</button>
+    </div>
+    <div class="terminal-container" id="terminalLog">Initializing 2Captcha Gemini Live JS Bridge...\n</div>
+  </div>
+
+  <script>
+    // System & WebSocket State Variables
+    let liveWs = null;
+    let liveAudioContext = null;
+    let liveAudioProcessor = null;
+    let liveMicStream = null;
+    let livePlayCtx = null;
+    let nextPlayTime = 0;
+    let activeSources = [];
+    let isConnected = false;
+    let toolCallCount = 0;
+    let lastPingTime = 0;
+
+    // Window error handler
+    window.onerror = function(msg, url, line, col, error) {
+      appendLog(`[ERROR] ${msg} (${line}:${col})`);
+      if (window.AndroidInterface && window.AndroidInterface.logError) {
+        window.AndroidInterface.logError(`WebView JS Error: ${msg} (${line}:${col})`);
+      }
+      return false;
+    };
+
+    function appendLog(msg) {
+      const term = document.getElementById('terminalLog');
+      if (term) {
+        const ts = new Date().toLocaleTimeString();
+        term.textContent += `[${ts}] ${msg}\n`;
+        term.scrollTop = term.scrollHeight;
+      }
+    }
+
+    function setStatus(status, text) {
+      const dot = document.getElementById('wsStatusDot');
+      const label = document.getElementById('wsStatusText');
+      if (dot && label) {
+        dot.className = 'status-dot ' + (status === 'connected' ? 'active' : (status === 'connecting' ? 'connecting' : ''));
+        label.textContent = text.toUpperCase();
+      }
+      const btnText = document.getElementById('btnLiveText');
+      const sparkle = document.getElementById('sparkleIcon');
+      if (btnText && sparkle) {
+        if (status === 'connected') {
+          btnText.textContent = "Disconnect Live Stream";
+          sparkle.classList.add('sparkle-active');
+        } else if (status === 'connecting') {
+          btnText.textContent = "Connecting Live...";
+          sparkle.classList.add('sparkle-active');
+        } else {
+          btnText.textContent = "Start Gemini Live Stream";
+          sparkle.classList.remove('sparkle-active');
+        }
+      }
+    }
+
+    function setTranscript(speaker, text, type = 'gemini') {
+      const box = document.getElementById('transcriptBox');
+      if (box) {
+        box.innerHTML = `<div class="speaker-label ${type}">${speaker}</div><div>${text}</div>`;
+        box.scrollTop = box.scrollHeight;
+      }
+    }
+
+    function appendTranscript(text) {
+      const box = document.getElementById('transcriptBox');
+      if (box) {
+        box.innerHTML += text;
+        box.scrollTop = box.scrollHeight;
+      }
+    }
+
+    function clearLiveLogs() {
+      const box = document.getElementById('transcriptBox');
+      if (box) {
+        box.innerHTML = `<div class="speaker-label system">System</div><div>Stream cleared. Standing by.</div>`;
+      }
+    }
+
+    function copyLogsToAndroid() {
+      const text = document.getElementById('terminalLog').textContent;
+      if (window.AndroidInterface && window.AndroidInterface.copyToClipboard) {
+        window.AndroidInterface.copyToClipboard(text);
+        appendLog("Copied terminal logs to Android Clipboard.");
+      } else {
+        try {
+          navigator.clipboard.writeText(text);
+          appendLog("Logs copied via Web Clipboard.");
+        } catch(e) {
+          appendLog("Clipboard copy failed: " + e.message);
+        }
+      }
+    }
+
+    let selectedLiveModel = "gemini-3.1-flash-live-preview";
+
+    function onLiveModelChange(val) {
+      selectedLiveModel = val;
+      document.getElementById('valModel').textContent = val.replace("gemini-", "").substring(0, 10);
+      appendLog(`Live model updated to: ${val}`);
+      if (isConnected) {
+        disconnectLiveWebSocket();
+        startLiveWebSocket();
+      }
+    }
+
+    function resolveLiveModel(requestedModel) {
+      if (!requestedModel) return selectedLiveModel || "gemini-3.1-flash-live-preview";
+      const clean = requestedModel.trim().replace(/^models\//, "");
+
+      // If user manually chose via dropdown, respect that
+      const dropdownVal = document.getElementById('liveModelSelect')?.value;
+      if (dropdownVal) {
+        return dropdownVal;
+      }
+
+      // Valid live models
+      if (clean === "gemini-3.1-flash-live-preview" ||
+          clean === "gemini-2.5-flash-native-audio-preview-12-2025" ||
+          clean === "gemini-2.0-flash-exp" ||
+          clean === "gemini-2.0-flash") {
+        return clean;
+      }
+
+      if (clean.includes("3.1")) {
+        appendLog(`[SYSTEM] Live model mapped from '${clean}' to 'gemini-3.1-flash-live-preview'`);
+        return "gemini-3.1-flash-live-preview";
+      }
+
+      if (clean.includes("2.5")) {
+        appendLog(`[SYSTEM] Live model mapped from '${clean}' to 'gemini-2.5-flash-native-audio-preview-12-2025'`);
+        return "gemini-2.5-flash-native-audio-preview-12-2025";
+      }
+
+      if (clean.includes("2.0")) {
+        return "gemini-2.0-flash-exp";
+      }
+
+      appendLog(`[SYSTEM] Defaulting to 'gemini-3.1-flash-live-preview' for Bidi WebSocket stream.`);
+      return "gemini-3.1-flash-live-preview";
+    }
+
+    // Toggle WebSocket Live Connection
+    function toggleLiveWebSocket() {
+      if (isConnected) {
+        disconnectLiveWebSocket();
+      } else {
+        startLiveWebSocket();
+      }
+    }
+
+    function startLiveWebSocket() {
+      let apiKey = "";
+      let model = selectedLiveModel;
+      let voice = "Puck";
+
+      if (window.AndroidInterface) {
+        try {
+          apiKey = window.AndroidInterface.getGeminiApiKey() || "";
+          const reqModel = window.AndroidInterface.getGeminiModel() || "";
+          voice = window.AndroidInterface.getGeminiVoice() || voice;
+          model = resolveLiveModel(reqModel);
+        } catch(e) {
+          appendLog("Failed to read settings from AndroidInterface: " + e.message);
+        }
+      }
+
+      if (!apiKey) {
+        alert("Please configure a valid Gemini API Key in Settings!");
+        if (window.AndroidInterface && window.AndroidInterface.showToast) {
+          window.AndroidInterface.showToast("Gemini API Key missing. Set in Settings tab.");
+        }
+        return;
+      }
+
+      const selectEl = document.getElementById('liveModelSelect');
+      if (selectEl) {
+        selectEl.value = model;
+      }
+      document.getElementById('valModel').textContent = model.replace("gemini-", "").substring(0, 10);
+      document.getElementById('valVoice').textContent = voice;
+
+      disconnectLiveWebSocket();
+      setStatus('connecting', 'Connecting...');
+      setTranscript('System', 'Connecting to Gemini Live WebSocket Endpoint...', 'system');
+      appendLog(`Initiating WebSocket connect to Gemini Live (Model: ${model}, Voice: ${voice})...`);
+
+      const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${apiKey}`;
+
+      try {
+        lastPingTime = Date.now();
+        liveWs = new WebSocket(wsUrl);
+      } catch(e) {
+        setStatus('error', 'Error');
+        setTranscript('Error', 'WebSocket Init Error: ' + e.message, 'error');
+        appendLog("WebSocket exception: " + e.message);
+        return;
+      }
+
+      liveWs.onopen = () => {
+        const latency = Date.now() - lastPingTime;
+        document.getElementById('valLatency').textContent = latency + " ms";
+        appendLog(`WebSocket connected (${latency}ms). Sending Bidi setup payload...`);
+
+        // Retrieve dynamic learned rules from native Android SharedPreferences
+        let learnedRulesPrompt = "";
+        if (window.AndroidInterface && window.AndroidInterface.getLearnedRulesJson) {
+          try {
+            const rulesArray = JSON.parse(window.AndroidInterface.getLearnedRulesJson());
+            if (rulesArray && rulesArray.length > 0) {
+              learnedRulesPrompt = "\nLEARNED REFLECTION RULES (MANDATORY):\n" + rulesArray.map((r, i) => `${i+1}. ${r}`).join("\n") + "\n";
+            }
+          } catch(err) {
+            appendLog("Error parsing learned rules: " + err.message);
+          }
+        }
+
+        // Setup Instructions for 2Captcha visual solver
+        const systemPrompt = `You are the autonomous 2Captcha Visual Solver & Action Controller.
+You analyze visual CAPTCHA puzzles on Android devices and trigger automated coordinate clicks, typing, and answer extraction.
+
+CRITICAL DIRECTIVES:
+1. ZERO CONVERSATIONAL FILLER: Never output chit-chat, reasoning, or markdown. Output strictly inside <answer>...</answer> tags or call tools directly.
+2. NUMERAL TO DIGITS: "enter numeral in digits" -> 984.
+3. ARITHMETIC: "solve math" e.g. "26 + 6 =" -> 32.
+4. DICE COMBINATIONS: left to right sum/values -> 624.
+5. SHAPE ALIGNMENT: Letter above square/triangle -> match strictly left-to-right.
+6. SEQUENCE COMPLETION: Missing numbers -> calculate exact number.
+7. MULTI-FRAME: Merge alternating frame characters -> "MUAG6T".
+${learnedRulesPrompt}
+If you determine the CAPTCHA solution, call 'submit_captcha_answer' tool with the exact answer string and target bounding box.`;
+
+        // Tool function declarations for native coordination
+        const tools = [
+          {
+            function_declarations: [
+              {
+                name: "submit_captcha_answer",
+                description: "Submits the solved 2Captcha answer and optional click coordinates to Android native automation.",
+                parameters: {
+                  type: "OBJECT",
+                  properties: {
+                    answer: {
+                      type: "STRING",
+                      description: "The exact predicted answer string or digits to type."
+                    },
+                    confidence: {
+                      type: "NUMBER",
+                      description: "Confidence score from 0.0 to 1.0"
+                    },
+                    clickX: {
+                      type: "NUMBER",
+                      description: "Target X coordinate pixel to tap"
+                    },
+                    clickY: {
+                      type: "NUMBER",
+                      description: "Target Y coordinate pixel to tap"
+                    }
+                  },
+                  required: ["answer"]
+                }
+              },
+              {
+                name: "request_screen_snapshot",
+                description: "Requests an immediate high-resolution screen capture frame from Android MediaProjection.",
+                parameters: {
+                  type: "OBJECT",
+                  properties: {
+                    reason: { type: "STRING", description: "Reason for snapshot" }
+                  }
+                }
+              }
+            ]
+          }
+        ];
+
+        const setupPayload = {
+          setup: {
+            model: "models/" + model,
+            generation_config: {
+              response_modalities: ["AUDIO"],
+              speech_config: {
+                voice_config: {
+                  prebuilt_voice_config: {
+                    voice_name: voice
+                  }
+                }
+              }
+            },
+            system_instruction: {
+              parts: [{ text: systemPrompt }]
+            },
+            tools: tools
+          }
+        };
+
+        liveWs.send(JSON.stringify(setupPayload));
+        appendLog("Bidi setup configuration frame dispatched.");
+      };
+
+      liveWs.onmessage = async (event) => {
+        try {
+          let payload;
+          if (event.data instanceof Blob) {
+            const text = await event.data.text();
+            payload = JSON.parse(text);
+          } else {
+            payload = JSON.parse(event.data);
+          }
+
+          if (payload.setupComplete) {
+            isConnected = true;
+            setStatus('connected', 'Live Active');
+            setTranscript('Gemini Live', 'Stream active & listening. Ready for 2Captcha visual automation.', 'gemini');
+            appendLog("Gemini Live setupComplete confirmed. Initializing 16kHz audio capture...");
+            initAudioCapture();
+            if (window.AndroidInterface && window.AndroidInterface.onLiveSessionStateChanged) {
+              window.AndroidInterface.onLiveSessionStateChanged(true);
+            }
+            return;
+          }
+
+          // Handle Tool Calls (Function Calling)
+          if (payload.toolCall && payload.toolCall.functionCalls) {
+            for (const call of payload.toolCall.functionCalls) {
+              toolCallCount++;
+              document.getElementById('valToolCalls').textContent = toolCallCount;
+              appendLog(`[TOOL_CALL] ${call.name} with args: ${JSON.stringify(call.args)}`);
+
+              if (call.name === "submit_captcha_answer") {
+                const ans = call.args.answer;
+                const clickX = call.args.clickX || -1;
+                const clickY = call.args.clickY || -1;
+
+                if (window.AndroidInterface && window.AndroidInterface.onSubmitCaptchaAnswer) {
+                  window.AndroidInterface.onSubmitCaptchaAnswer(ans, clickX, clickY);
+                }
+
+                // Return tool response frame
+                if (liveWs && liveWs.readyState === WebSocket.OPEN) {
+                  const resp = {
+                    toolResponse: {
+                      functionResponses: [
+                        {
+                          id: call.id,
+                          response: {
+                            output: { success: true, message: `Answer '${ans}' dispatched to native input engine.` }
+                          }
+                        }
+                      ]
+                    }
+                  };
+                  liveWs.send(JSON.stringify(resp));
+                }
+              } else if (call.name === "request_screen_snapshot") {
+                if (window.AndroidInterface && window.AndroidInterface.captureScreenSnapshot) {
+                  window.AndroidInterface.captureScreenSnapshot();
+                }
+              }
+            }
+          }
+
+          // Handle Server Content (Audio PCM & Text Stream)
+          if (payload.serverContent) {
+            const content = payload.serverContent;
+
+            if (content.interrupted) {
+              clearAudioQueue();
+              appendTranscript(" [Interrupted]");
+              appendLog("Barge-in interruption received.");
+            }
+
+            if (content.modelTurn && content.modelTurn.parts) {
+              for (const part of content.modelTurn.parts) {
+                if (part.text) {
+                  appendTranscript(part.text);
+                  // Check if answer is inside <answer> tags
+                  const match = part.text.match(/<answer>([\s\S]*?)<\/answer>/i);
+                  if (match && window.AndroidInterface && window.AndroidInterface.onSubmitCaptchaAnswer) {
+                    window.AndroidInterface.onSubmitCaptchaAnswer(match[1].trim(), -1, -1);
+                  }
+                }
+                if (part.inlineData && part.inlineData.data) {
+                  scheduleAudioPlay(part.inlineData.data);
+                }
+              }
+            }
+          }
+
+        } catch(e) {
+          appendLog("Error processing WebSocket packet: " + e.message);
+        }
+      };
+
+      liveWs.onclose = (e) => {
+        appendLog(`WebSocket closed. Code: ${e.code}, Reason: ${e.reason || 'None'}`);
+        disconnectLiveWebSocket();
+      };
+
+      liveWs.onerror = (e) => {
+        appendLog("WebSocket error encountered.");
+        disconnectLiveWebSocket();
+      };
+    }
+
+    function disconnectLiveWebSocket() {
+      isConnected = false;
+      setStatus('disconnected', 'Disconnected');
+
+      if (liveMicStream) {
+        try { liveMicStream.getTracks().forEach(t => t.stop()); } catch(e) {}
+        liveMicStream = null;
+      }
+      if (liveAudioProcessor) {
+        try { liveAudioProcessor.disconnect(); } catch(e) {}
+        liveAudioProcessor = null;
+      }
+      if (liveAudioContext) {
+        try { liveAudioContext.close(); } catch(e) {}
+        liveAudioContext = null;
+      }
+      clearAudioQueue();
+      if (livePlayCtx) {
+        try { livePlayCtx.close(); } catch(e) {}
+        livePlayCtx = null;
+      }
+      if (liveWs) {
+        try { liveWs.close(); } catch(e) {}
+        liveWs = null;
+      }
+
+      if (window.AndroidInterface && window.AndroidInterface.onLiveSessionStateChanged) {
+        window.AndroidInterface.onLiveSessionStateChanged(false);
+      }
+      appendLog("Live WebSocket disconnected cleanly.");
+    }
+
+    /* --- REAL-TIME 16kHz PCM MICROPHONE CAPTURE --- */
+    async function initAudioCapture() {
+      try {
+        appendLog("Requesting microphone permission for 16kHz PCM stream...");
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        liveMicStream = stream;
+
+        liveAudioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+        const source = liveAudioContext.createMediaStreamSource(stream);
+        liveAudioProcessor = liveAudioContext.createScriptProcessor(2048, 1, 1);
+
+        liveAudioProcessor.onaudioprocess = (e) => {
+          if (!liveWs || liveWs.readyState !== WebSocket.OPEN) return;
+
+          const inputFloat32 = e.inputBuffer.getChannelData(0);
+          const pcmBuffer = new ArrayBuffer(inputFloat32.length * 2);
+          const pcmView = new DataView(pcmBuffer);
+
+          for (let i = 0; i < inputFloat32.length; i++) {
+            let sample = Math.max(-1, Math.min(1, inputFloat32[i]));
+            let int16Sample = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
+            pcmView.setInt16(i * 2, int16Sample, true);
+          }
+
+          const base64Audio = arrayBufferToBase64(pcmBuffer);
+
+          liveWs.send(JSON.stringify({
+            realtimeInput: {
+              audio: {
+                mimeType: "audio/pcm;rate=16000",
+                data: base64Audio
+              }
+            }
+          }));
+        };
+
+        source.connect(liveAudioProcessor);
+        liveAudioProcessor.connect(liveAudioContext.destination);
+        appendLog("16kHz audio capture running.");
+
+      } catch(e) {
+        appendLog("Microphone capture failure: " + e.message);
+        setTranscript('Audio Error', 'Microphone capture failed: ' + e.message, 'error');
+      }
+    }
+
+    /* --- REAL-TIME 24kHz PCM AUDIO PLAYBACK --- */
+    function scheduleAudioPlay(base64Data) {
+      try {
+        if (!livePlayCtx) {
+          livePlayCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
+        }
+
+        const rawBuffer = base64ToArrayBuffer(base64Data);
+        const int16Samples = new Int16Array(rawBuffer);
+        const float32Samples = new Float32Array(int16Samples.length);
+
+        for (let i = 0; i < int16Samples.length; i++) {
+          float32Samples[i] = int16Samples[i] / 32768.0;
+        }
+
+        const audioBuffer = livePlayCtx.createBuffer(1, float32Samples.length, 24000);
+        audioBuffer.copyToChannel(float32Samples, 0);
+
+        const sourceNode = livePlayCtx.createBufferSource();
+        sourceNode.buffer = audioBuffer;
+        sourceNode.connect(livePlayCtx.destination);
+
+        const currentTime = livePlayCtx.currentTime;
+        if (nextPlayTime < currentTime) {
+          nextPlayTime = currentTime + 0.05;
+        }
+
+        sourceNode.start(nextPlayTime);
+        activeSources.push({
+          source: sourceNode,
+          endTime: nextPlayTime + audioBuffer.duration
+        });
+
+        nextPlayTime += audioBuffer.duration;
+        activeSources = activeSources.filter(item => item.endTime > currentTime);
+
+      } catch(e) {
+        appendLog("Audio play schedule error: " + e.message);
+      }
+    }
+
+    function clearAudioQueue() {
+      activeSources.forEach(item => {
+        try { item.source.stop(); } catch(e) {}
+      });
+      activeSources = [];
+      nextPlayTime = 0;
+    }
+
+    // Called from native Android to inject frame image base64 directly into WebSocket stream
+    window.sendLiveFrame = function(base64Jpg) {
+      if (liveWs && liveWs.readyState === WebSocket.OPEN) {
+        const framePacket = {
+          realtimeInput: {
+            video: {
+              mimeType: "image/jpeg",
+              data: base64Jpg
+            }
+          }
+        };
+        liveWs.send(JSON.stringify(framePacket));
+        appendLog("Live screen frame injected into WebSocket stream.");
+      }
+    };
+
+    function sendFrameSample() {
+      if (window.AndroidInterface && window.AndroidInterface.captureScreenSnapshot) {
+        window.AndroidInterface.captureScreenSnapshot();
+        appendLog("Triggered native screen snapshot from JS UI.");
+      } else {
+        appendLog("AndroidInterface.captureScreenSnapshot unavailable.");
+      }
+    }
+
+    // Conversion utilities
+    function base64ToArrayBuffer(base64) {
+      const binaryString = window.atob(base64);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      return bytes.buffer;
+    }
+
+    function arrayBufferToBase64(buffer) {
+      let binary = '';
+      const bytes = new Uint8Array(buffer);
+      for (let i = 0; i < bytes.byteLength; i++) {
+        binary += String.fromCharCode(bytes[i]);
+      }
+      return window.btoa(binary);
+    }
+  </script>
+</body>
+</html>
