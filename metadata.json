@@ -1,0 +1,7 @@
+{
+  "name": "2Captcha Solver",
+  "description": "Autonomous visual 2Captcha solver and Android assistant with floating HUD overlay, Gemini Live engine, and humanized telemetry.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
