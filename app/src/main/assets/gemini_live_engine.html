@@ -652,7 +652,6 @@ Be precise, extremely fast, and execute tool calls immediately.`;
           }
         ];
 
-        // FIXED: responseModalities strictly ["AUDIO"] for Gemini Live Bidirectional WebSocket API
         const setupPayload = {
           setup: {
             model: "models/" + model,
@@ -846,14 +845,13 @@ Be precise, extremely fast, and execute tool calls immediately.`;
 
           const base64Audio = arrayBufferToBase64(pcmBuffer);
 
+          // FIXED: Direct realtimeInput.audio schema (mediaChunks is deprecated)
           liveWs.send(JSON.stringify({
             realtimeInput: {
-              mediaChunks: [
-                {
-                  mimeType: "audio/pcm;rate=16000",
-                  data: base64Audio
-                }
-              ]
+              audio: {
+                mimeType: "audio/pcm;rate=16000",
+                data: base64Audio
+              }
             }
           }));
         };
@@ -936,14 +934,13 @@ Be precise, extremely fast, and execute tool calls immediately.`;
       }
 
       if (liveWs && liveWs.readyState === WebSocket.OPEN) {
+        // FIXED: Direct realtimeInput.video schema (mediaChunks is deprecated)
         const framePacket = {
           realtimeInput: {
-            mediaChunks: [
-              {
-                mimeType: "image/jpeg",
-                data: base64Jpg
-              }
-            ]
+            video: {
+              mimeType: "image/jpeg",
+              data: base64Jpg
+            }
           }
         };
         liveWs.send(JSON.stringify(framePacket));
