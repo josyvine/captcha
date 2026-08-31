@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    
+    <!-- Outer Scanning Frame / Crosshairs -->
+    <path
+        android:pathData="M30,38 L30,30 L38,30 M70,30 L78,30 L78,38 M78,70 L78,78 L70,78 M38,78 L30,78 L30,70"
+        android:strokeWidth="3.5"
+        android:strokeColor="#38BDF8"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+
+    <!-- Center Vision Sensor & AI Node -->
+    <path
+        android:pathData="M54,36 C42,36 34,54 34,54 C34,54 42,72 54,72 C66,72 74,54 74,54 C74,54 66,36 54,36 Z"
+        android:strokeWidth="3"
+        android:strokeColor="#00F0FF"
+        android:fillColor="#1500F0FF" />
+
+    <!-- Center Iris / Pupil Glow -->
+    <path
+        android:pathData="M54,46 A8,8 0 1,0 54,62 A8,8 0 1,0 54,46 Z"
+        android:fillColor="#38BDF8" />
+
+    <path
+        android:pathData="M54,50 A4,4 0 1,0 54,58 A4,4 0 1,0 54,50 Z"
+        android:fillColor="#FFFFFF" />
+
+    <!-- Top Laser Scan Beam -->
+    <path
+        android:pathData="M24,54 L84,54"
+        android:strokeWidth="1.5"
+        android:strokeColor="#FF0055"
+        android:strokeLineCap="round" />
+</vector>
+
