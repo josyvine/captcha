@@ -18,6 +18,7 @@ import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Handler
+import android.os.HandlerThread
 import android.os.IBinder
 import android.os.Looper
 import android.util.DisplayMetrics
@@ -40,6 +41,9 @@ class ScreenCaptureService : Service() {
     private var screenWidth = 720
     private var screenHeight = 1280
     private var screenDensity = 320
+
+    private var captureThread: HandlerThread? = null
+    private var backgroundHandler: Handler? = null
 
     @Volatile
     private var latestFrameBitmap: Bitmap? = null
@@ -87,6 +91,10 @@ class ScreenCaptureService : Service() {
         super.onCreate()
         instance = this
         createNotificationChannel()
+
+        captureThread = HandlerThread("ScreenCaptureBackgroundThread").apply { start() }
+        backgroundHandler = Handler(captureThread!!.looper)
+
         try {
             startForegroundWithNotification()
         } catch (e: Throwable) {
@@ -199,7 +207,7 @@ class ScreenCaptureService : Service() {
                     cleanup()
                     _isCapturing.value = false
                 }
-            }, Handler(Looper.getMainLooper()))
+            }, backgroundHandler ?: Handler(Looper.getMainLooper()))
 
             val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -225,13 +233,14 @@ class ScreenCaptureService : Service() {
 
             imageReader = ImageReader.newInstance(screenWidth, screenHeight, PixelFormat.RGBA_8888, 2)
             
-            // Register real-time background listener to continuously cache the latest GPU screen frame
+            // Dedicated background handler prevents main UI thread starvation
+            val handler = backgroundHandler ?: Handler(Looper.getMainLooper())
             imageReader?.setOnImageAvailableListener({ reader ->
                 try {
                     val img = reader.acquireLatestImage() ?: return@setOnImageAvailableListener
                     processAndCacheImage(img)
                 } catch (_: Exception) {}
-            }, Handler(Looper.getMainLooper()))
+            }, handler)
 
             virtualDisplay = mediaProjection?.createVirtualDisplay(
                 "CaptchaScreenCaptureDisplay",
@@ -241,7 +250,7 @@ class ScreenCaptureService : Service() {
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
                 imageReader?.surface,
                 null,
-                null
+                handler
             )
 
             _isCapturing.value = true
@@ -317,6 +326,11 @@ class ScreenCaptureService : Service() {
 
     override fun onDestroy() {
         cleanup()
+        try {
+            captureThread?.quitSafely()
+        } catch (_: Exception) {}
+        captureThread = null
+        backgroundHandler = null
         instance = null
         super.onDestroy()
         Logger.log("VISION", "ScreenCaptureService destroyed.", LogLevel.INFO)
