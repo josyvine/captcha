@@ -28,18 +28,10 @@ class GeminiVisionEngine {
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
 
     /**
-     * Sanitizes model name to ensure REST endpoints never receive WebSocket-only live models
+     * Cleans model name prefix for REST generateContent endpoint
      */
     private fun sanitizeRestModelName(modelName: String): String {
-        val clean = modelName.trim().removePrefix("models/")
-        if (clean.contains("live", ignoreCase = true) ||
-            clean.contains("native-audio", ignoreCase = true) ||
-            clean.contains("bidi", ignoreCase = true)
-        ) {
-            Logger.log("NETWORK", "Mapped Live model '$clean' to REST Vision model 'gemini-2.5-flash'.", LogLevel.INFO)
-            return "gemini-2.5-flash"
-        }
-        return clean.ifBlank { "gemini-2.5-flash" }
+        return modelName.trim().removePrefix("models/")
     }
 
     /**
@@ -72,11 +64,11 @@ class GeminiVisionEngine {
 
             for (i in 0 until modelsArray.length()) {
                 val modelObj = modelsArray.getJSONObject(i)
-                val name = modelObj.optString("name", "") // e.g. "models/gemini-2.5-flash"
+                val name = modelObj.optString("name", "") // e.g. "models/gemini-3.5-flash"
                 val cleanName = name.removePrefix("models/")
                 val methodsArray = modelObj.optJSONArray("supportedGenerationMethods")
 
-                // Filter out live/websocket-only models to avoid HTTP 400 generateContent errors
+                // Filter out WebSocket-only live models to ensure only REST-compatible vision models are listed
                 val isLiveOnly = cleanName.contains("live", ignoreCase = true) ||
                         cleanName.contains("native-audio", ignoreCase = true) ||
                         cleanName.contains("bidi", ignoreCase = true)
@@ -110,7 +102,7 @@ class GeminiVisionEngine {
     suspend fun solveCaptcha(
         bitmap: Bitmap,
         apiKey: String,
-        modelName: String = "gemini-2.5-flash",
+        modelName: String,
         customDirective: String? = null,
         learnedRules: List<String> = emptyList()
     ): Result<CaptchaSolution> = withContext(Dispatchers.IO) {
@@ -214,7 +206,7 @@ class GeminiVisionEngine {
         correctAnswer: String,
         directive: String,
         apiKey: String,
-        modelName: String = "gemini-2.5-flash"
+        modelName: String
     ): Result<String> = withContext(Dispatchers.IO) {
         if (apiKey.isBlank()) return@withContext Result.failure(IllegalArgumentException("API Key missing"))
         val targetModel = sanitizeRestModelName(modelName)
