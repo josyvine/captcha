@@ -18,6 +18,7 @@ import com.example.model.LogLevel
 import com.example.util.Logger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -33,6 +34,7 @@ class CaptchaAccessibilityService : AccessibilityService() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val random = Random()
+    private var currentTypingJob: Job? = null
 
     companion object {
         private val _isConnected = MutableStateFlow(false)
@@ -101,6 +103,7 @@ class CaptchaAccessibilityService : AccessibilityService() {
     override fun onUnbind(intent: android.content.Intent?): Boolean {
         instance = null
         isSolvingActive = false
+        currentTypingJob?.cancel()
         Logger.log("ACCESSIBILITY", "Captcha Accessibility Service unbound.", LogLevel.ACCESSIBILITY)
         return super.onUnbind(intent)
     }
@@ -129,6 +132,7 @@ class CaptchaAccessibilityService : AccessibilityService() {
 
     override fun onInterrupt() {
         isSolvingActive = false
+        currentTypingJob?.cancel()
         Logger.log("ACCESSIBILITY", "Accessibility Service interrupted.", LogLevel.ACCESSIBILITY)
     }
 
@@ -152,6 +156,38 @@ class CaptchaAccessibilityService : AccessibilityService() {
             if (isStrict2CaptchaScreen(child)) return true
         }
         return false
+    }
+
+    /**
+     * Extracts active min and max character constraints displayed below the captcha (e.g. min 8, max 8)
+     */
+    private fun extractCaptchaConstraints(node: AccessibilityNodeInfo): Pair<Int?, Int?> {
+        var minVal: Int? = null
+        var maxVal: Int? = null
+
+        fun traverse(n: AccessibilityNodeInfo) {
+            val text = "${n.text ?: ""} ${n.contentDescription ?: ""}".lowercase()
+            
+            val minPattern = Pattern.compile("min\\s*(\\d+)")
+            val minMatcher = minPattern.matcher(text)
+            if (minMatcher.find()) {
+                minVal = minMatcher.group(1)?.toIntOrNull()
+            }
+
+            val maxPattern = Pattern.compile("max\\s*(\\d+)")
+            val maxMatcher = maxPattern.matcher(text)
+            if (maxMatcher.find()) {
+                maxVal = maxMatcher.group(1)?.toIntOrNull()
+            }
+
+            for (i in 0 until n.childCount) {
+                val child = n.getChild(i) ?: continue
+                traverse(child)
+            }
+        }
+
+        traverse(node)
+        return Pair(minVal, maxVal)
     }
 
     /**
@@ -305,7 +341,7 @@ class CaptchaAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * Executes humanized organic typing into the target input field and auto-submits
+     * Executes humanized organic typing into the target input field with length verification and auto-submits
      */
     fun performOrganicTyping(
         textToType: String,
@@ -313,15 +349,42 @@ class CaptchaAccessibilityService : AccessibilityService() {
         telemetry: HumanTelemetryConfig = HumanTelemetryConfig(),
         onFinished: () -> Unit
     ) {
-        serviceScope.launch {
-            Logger.log("ACCESSIBILITY", "Initiating organic typing for \"$textToType\"...", LogLevel.ACCESSIBILITY)
+        currentTypingJob?.cancel()
+        currentTypingJob = serviceScope.launch {
+            val cleanText = textToType.trim()
+            if (cleanText.isBlank()) {
+                onFinished()
+                return@launch
+            }
+
+            // Verify against active screen min/max constraints to prevent stale lagged typing
+            val root = rootInActiveWindow
+            if (root != null) {
+                val (minLen, maxLen) = extractCaptchaConstraints(root)
+                if (minLen != null && cleanText.length < minLen) {
+                    Logger.log("ACCESSIBILITY", "Discarded stale answer '$cleanText' (Length ${cleanText.length} < min $minLen).", LogLevel.INFO)
+                    onFinished()
+                    return@launch
+                }
+                if (maxLen != null && cleanText.length > maxLen) {
+                    Logger.log("ACCESSIBILITY", "Discarded stale answer '$cleanText' (Length ${cleanText.length} > max $maxLen).", LogLevel.INFO)
+                    onFinished()
+                    return@launch
+                }
+            }
+
+            Logger.log("ACCESSIBILITY", "Initiating organic typing for \"$cleanText\"...", LogLevel.ACCESSIBILITY)
 
             // Focus active 2Captcha input field
             findAndFocusInputField(targetInputBounds, telemetry)
-            delay(150)
+            delay(120)
+
+            // Clean reset input box before typing to prevent character overlap
+            applyTextToActiveFocus("")
+            delay(60)
 
             val currentBuffer = StringBuilder()
-            val chars = textToType.toCharArray()
+            val chars = cleanText.toCharArray()
 
             for (i in chars.indices) {
                 val targetChar = chars[i]
