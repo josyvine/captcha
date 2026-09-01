@@ -108,6 +108,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var autoSolveJob: Job? = null
     private var frameSyncJob: Job? = null
     private var sessionStartTime = SystemClock.elapsedRealtime()
+    private var lastSubmitTimestamp = 0L
 
     init {
         // Recover and display previous session crash report if recorded
@@ -411,6 +412,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         telemetry = _humanTelemetry.value
                     ) {
                         viewModelScope.launch {
+                            lastSubmitTimestamp = System.currentTimeMillis()
                             FloatingHudService.hudStatus.value = HudStatus.SUBMITTING
                             FloatingHudService.marqueeLog.value = "Submitted successfully."
                             delay(600)
@@ -423,6 +425,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 } else {
                     delay(500)
+                    lastSubmitTimestamp = System.currentTimeMillis()
                     FloatingHudService.hudStatus.value = HudStatus.STANDBY
                     FloatingHudService.marqueeLog.value = "Solved (${solution.latencyMs}ms)"
                     if (!_isAutoSolveActive.value) {
@@ -468,8 +471,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun onLiveAnswerReceived(answer: String, clickX: Float, clickY: Float) {
-        FloatingHudService.aiOutput.value = answer
-        FloatingHudService.marqueeLog.value = "Live Solved: $answer"
+        val clean = answer.trim()
+        if (clean.isBlank()) return
+
+        // Invalidate stale answers arriving too soon (< 600ms) after a previous submission
+        val now = System.currentTimeMillis()
+        if (now - lastSubmitTimestamp < 600L) {
+            Logger.log("VISION", "Dropped stale live answer '$clean' (Arrived within ${now - lastSubmitTimestamp}ms of submit).", LogLevel.INFO)
+            return
+        }
+
+        FloatingHudService.aiOutput.value = clean
+        FloatingHudService.marqueeLog.value = "Live Solved: $clean"
         FloatingHudService.hudStatus.value = HudStatus.TYPING
 
         prefs.recordAttempt(solved = true, latencyMs = 350L)
@@ -479,11 +492,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (accessibility != null) {
             CaptchaAccessibilityService.isSolvingActive = true
             accessibility.performOrganicTyping(
-                textToType = answer,
+                textToType = clean,
                 targetInputBounds = null,
                 telemetry = _humanTelemetry.value
             ) {
                 viewModelScope.launch {
+                    lastSubmitTimestamp = System.currentTimeMillis()
                     FloatingHudService.hudStatus.value = HudStatus.SUBMITTING
                     delay(500)
                     FloatingHudService.hudStatus.value = HudStatus.STANDBY
@@ -511,6 +525,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 telemetry = _humanTelemetry.value
             ) {
                 viewModelScope.launch {
+                    lastSubmitTimestamp = System.currentTimeMillis()
                     delay(300)
                     FloatingHudService.hudStatus.value = HudStatus.STANDBY
                     if (!_isAutoSolveActive.value) {
