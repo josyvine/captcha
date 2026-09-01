@@ -101,6 +101,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private var sessionTimerJob: Job? = null
     private var autoSolveJob: Job? = null
+    private var frameSyncJob: Job? = null
     private var sessionStartTime = SystemClock.elapsedRealtime()
 
     init {
@@ -111,10 +112,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         startSessionTimer()
-        viewModelScope.launch {
-            delay(500)
-            refreshCurrentFrame()
-        }
+        startContinuousFrameSync()
 
         // Auto-enable screen capture readiness if Accessibility is active
         if (CaptchaAccessibilityService.instance != null) {
@@ -168,6 +166,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // Hook Error correction banner detection from Accessibility
         CaptchaAccessibilityService.onErrorCorrectionDetected = { wrong, correct, directive ->
             handleErrorCorrection(wrong, correct, directive)
+        }
+    }
+
+    private fun startContinuousFrameSync() {
+        frameSyncJob?.cancel()
+        frameSyncJob = viewModelScope.launch {
+            while (true) {
+                try {
+                    val frame = captureLiveFrame()
+                    if (frame != null) {
+                        _currentFrame.value = frame
+                        FloatingHudService.targetSnapshot.value = frame
+                    }
+                } catch (_: Exception) {}
+                delay(1000) // 1 FPS live preview refresh
+            }
         }
     }
 
@@ -261,38 +275,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _isMediaProjectionAuthorized.value = authorized
     }
 
-    suspend fun captureLiveFrame(): Bitmap {
-        // Priority 1: Direct OS Hardware Screenshot via Active Accessibility Service (Android 11+, Zero-Prompt, Rock-Solid)
-        val accessibility = CaptchaAccessibilityService.instance
-        if (accessibility != null) {
-            val screenshot = accessibility.captureScreenBitmap()
-            if (screenshot != null) return screenshot
-        }
-
-        // Priority 2: Dedicated ScreenCaptureService GPU Framebuffer via MediaProjection
+    suspend fun captureLiveFrame(): Bitmap? {
+        // Priority 1: Dedicated ScreenCaptureService GPU Framebuffer via MediaProjection
         val serviceCapture = ScreenCaptureService.instance
         if (serviceCapture != null) {
             val bmp = serviceCapture.captureFrame()
             if (bmp != null) return bmp
         }
 
-        // Priority 2b: ScreenCaptureManager instance if present
+        // Priority 2: Direct OS Hardware Screenshot via Active Accessibility Service (Android 11+)
+        val accessibility = CaptchaAccessibilityService.instance
+        if (accessibility != null) {
+            val screenshot = accessibility.captureScreenBitmap()
+            if (screenshot != null) return screenshot
+        }
+
+        // Priority 3: ScreenCaptureManager instance if present
         val capture = screenCaptureManager
         if (capture != null) {
             val bmp = capture.captureFrame()
             if (bmp != null) return bmp
         }
 
-        // Priority 3: Fallback test challenge
-        Logger.log("VISION", "Notice: Active screen capture source waiting for frame. Using test canvas.", LogLevel.INFO)
-        return ScreenCaptureManager(getApplication()).generateRealisticTestCaptcha()
+        return _currentFrame.value
     }
 
     fun refreshCurrentFrame() {
         viewModelScope.launch {
             val bmp = captureLiveFrame()
-            _currentFrame.value = bmp
-            FloatingHudService.targetSnapshot.value = bmp
+            if (bmp != null) {
+                _currentFrame.value = bmp
+                FloatingHudService.targetSnapshot.value = bmp
+            }
         }
     }
 
@@ -318,7 +332,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         }
                     }
 
-                    // 2.2s breathing room before capturing and solving next captcha
+                    // 2.2s delay before next solve attempt
                     delay(2200)
                 }
             }
@@ -341,6 +355,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             FloatingHudService.marqueeLog.value = "Capturing live screen..."
 
             val frame = captureLiveFrame()
+            if (frame == null) {
+                Logger.log("VISION", "Screen capture returned no frame. Ensure Screen Capture is Authorized.", LogLevel.INFO)
+                _isSolving.value = false
+                FloatingHudService.hudStatus.value = HudStatus.STANDBY
+                FloatingHudService.marqueeLog.value = "Awaiting Screen Capture"
+                if (!_isAutoSolveActive.value) {
+                    CaptchaAccessibilityService.isSolvingActive = false
+                }
+                onFinished?.invoke(false)
+                return@launch
+            }
+
             _currentFrame.value = frame
             FloatingHudService.targetSnapshot.value = frame
 
@@ -527,6 +553,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     override fun onCleared() {
         sessionTimerJob?.cancel()
         autoSolveJob?.cancel()
+        frameSyncJob?.cancel()
         screenCaptureManager?.release()
         CaptchaAccessibilityService.isSolvingActive = false
         super.onCleared()
