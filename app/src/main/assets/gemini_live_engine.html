@@ -514,7 +514,7 @@
             {
               role: "user",
               parts: [
-                { text: "Inspect the 2Captcha puzzle on the screen right now. Solve it immediately and call type_answer or click_coordinate tool." }
+                { text: "Inspect the 2Captcha challenge on screen right now. Solve it accurately and execute the type_answer or click_coordinate tool immediately." }
               ]
             }
           ],
@@ -605,13 +605,18 @@ You operate in strict ROBOTIC MODE. NEVER output conversational small talk, fill
 
 CRITICAL DIRECTIVES:
 1. ROBOTIC EXECUTION ONLY: Output directly via tools. DO NOT wait for voice speech.
-2. CONTINUOUS PROACTIVE SOLVING: As you watch the video stream, whenever a new 2Captcha puzzle appears (distorted alphanumeric text, digits, math equation, multi-frame moving characters, or puzzle coordinates), IMMEDIATELY call the appropriate tool ('type_answer' or 'click_coordinate').
-3. RED ERROR CORRECTION / HINT DETECTION: If a red banner appears above the captcha containing "Right answer is...", "Correct answer:", or "Your answer was wrong", immediately invoke 'report_hint' tool with the exact correct value!
-4. CAPTCHA FORMATS:
-   - TEXT & DIGITS: Read characters accurately in left-to-right order -> call 'type_answer(text="...")'.
+2. CONTINUOUS PROACTIVE SOLVING: As you watch the video stream, whenever a new 2Captcha puzzle appears (distorted alphanumeric text, digits, math equation, shape sub-labels, or puzzle coordinates), IMMEDIATELY call the appropriate tool ('type_answer' or 'click_coordinate').
+3. SHAPE & COLOR SUB-LABELS (e.g. letters above colored square, triangle, or color boxes like Q v Q 8):
+   - Check the prompt instruction carefully (e.g. "Letters above the green square", "Letters in blue box").
+   - Inspect each letter and the colored shape directly below/above it. Extract ONLY the characters matching that target shape/color in left-to-right order -> call 'type_answer'.
+4. MIN & MAX LENGTH CONSTRAINTS:
+   - Read the min X and max Y constraint displayed on screen below the captcha (e.g. min 5 max 5, min 8 max 8, min 6 max 6). Your answer length MUST strictly match the constraint. Never output under-length partial characters.
+5. RED ERROR CORRECTION BANNER DETECTION:
+   - If a red banner appears above the captcha containing "Right answer is...", "Correct answer:", or "Your answer was wrong", immediately invoke 'report_hint' tool with the exact correct value!
+6. OTHER CAPTCHA FORMATS:
+   - TEXT & DIGITS: Read distorted characters accurately in left-to-right order -> call 'type_answer(text="...")'.
    - MATH ARITHMETIC: Compute exact numeric answer e.g. "26 + 6 = ?" -> call 'type_answer(text="32")'.
-   - MULTI-FRAME CHARACTERS: Combine alternating character sequences -> call 'type_answer(text="...")'.
-   - COORDINATE PUZZLES: Compute center percentage X (0-100%) and Y (0-100%) of the target match -> call 'click_coordinate(x_percent=..., y_percent=...)'.
+   - 2-ELEMENT / PUZZLE MATCHING: For "Assemble from 2 elements the same code", compute the center percentage X (0-100%) and Y (0-100%) of the target matches and call 'click_coordinate' in order.
 ${learnedRulesPrompt}`;
 
         const tools = [
