@@ -179,11 +179,11 @@ class CaptchaAccessibilityService : AccessibilityService() {
             }
         }
 
-        // Detect captcha input fields
-        if (node.isEditable && (
-            combined.contains("captcha", ignoreCase = true) ||
-            node.className?.contains("EditText", ignoreCase = true) == true
-        )) {
+        // Detect valid captcha input fields (excluding Chrome address / search bars)
+        val viewId = node.viewIdResourceName?.lowercase() ?: ""
+        val isUrlBar = viewId.contains("url_bar") || viewId.contains("search_box") || viewId.contains("omnibox")
+
+        if (!isUrlBar && (node.isEditable || node.className?.contains("EditText", ignoreCase = true) == true)) {
             val bounds = Rect()
             node.getBoundsInScreen(bounds)
             onInputNodeFound?.invoke(bounds)
@@ -316,7 +316,7 @@ class CaptchaAccessibilityService : AccessibilityService() {
         serviceScope.launch {
             Logger.log("ACCESSIBILITY", "Initiating organic typing for \"$textToType\"...", LogLevel.ACCESSIBILITY)
 
-            // Focus active input field
+            // Focus active 2Captcha input field
             findAndFocusInputField(targetInputBounds, telemetry)
             delay(150)
 
@@ -389,9 +389,26 @@ class CaptchaAccessibilityService : AccessibilityService() {
     }
 
     private fun findFirstInputNode(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        val viewId = node.viewIdResourceName?.lowercase() ?: ""
+        val text = node.text?.toString() ?: ""
+        val hint = node.hintText?.toString() ?: ""
+        val desc = node.contentDescription?.toString() ?: ""
+        val combined = "$viewId $text $hint $desc".lowercase()
+
+        // Explicitly ignore Chrome address bar, search box, URL bar, and omnibox
+        if (combined.contains("url_bar") ||
+            combined.contains("search_box") ||
+            combined.contains("omnibox") ||
+            combined.contains("location_bar") ||
+            combined.contains("search_src_text")
+        ) {
+            return null
+        }
+
         if (node.isEditable || node.className?.contains("EditText", ignoreCase = true) == true) {
             return node
         }
+
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
             val found = findFirstInputNode(child)
@@ -440,6 +457,7 @@ class CaptchaAccessibilityService : AccessibilityService() {
             combined.contains("check") ||
             combined.contains("send") ||
             combined.contains("verify") ||
+            combined.contains("confirm") ||
             combined.contains("ok") ||
             combined.contains("отправить") ||
             combined.contains("готово")
@@ -458,12 +476,28 @@ class CaptchaAccessibilityService : AccessibilityService() {
     private fun applyTextToActiveFocus(text: String) {
         try {
             val root = rootInActiveWindow ?: return
-            val focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: findFirstInputNode(root)
-            if (focused != null) {
+            val focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+            val focusedId = focused?.viewIdResourceName?.lowercase() ?: ""
+
+            // Never type into Chrome URL bar or Search Box
+            if (focused != null &&
+                !focusedId.contains("url_bar") &&
+                !focusedId.contains("search_box") &&
+                !focusedId.contains("omnibox")
+            ) {
                 val args = Bundle().apply {
                     putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
                 }
                 focused.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+                return
+            }
+
+            val inputNode = findFirstInputNode(root)
+            if (inputNode != null) {
+                val args = Bundle().apply {
+                    putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+                }
+                inputNode.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
             }
         } catch (_: Exception) {}
     }
