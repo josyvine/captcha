@@ -41,6 +41,10 @@ class ScreenCaptureService : Service() {
     private var screenHeight = 1280
     private var screenDensity = 320
 
+    @Volatile
+    private var latestFrameBitmap: Bitmap? = null
+    private val frameLock = Any()
+
     companion object {
         private const val NOTIFICATION_ID = 2002
         private const val CHANNEL_ID = "screen_capture_service_channel"
@@ -220,6 +224,15 @@ class ScreenCaptureService : Service() {
             virtualDisplay?.release()
 
             imageReader = ImageReader.newInstance(screenWidth, screenHeight, PixelFormat.RGBA_8888, 2)
+            
+            // Register real-time background listener to continuously cache the latest GPU screen frame
+            imageReader?.setOnImageAvailableListener({ reader ->
+                try {
+                    val img = reader.acquireLatestImage() ?: return@setOnImageAvailableListener
+                    processAndCacheImage(img)
+                } catch (_: Exception) {}
+            }, Handler(Looper.getMainLooper()))
+
             virtualDisplay = mediaProjection?.createVirtualDisplay(
                 "CaptchaScreenCaptureDisplay",
                 screenWidth,
@@ -232,11 +245,36 @@ class ScreenCaptureService : Service() {
             )
 
             _isCapturing.value = true
-            Logger.log("VISION", "Screen capture Framebuffer active (${screenWidth}x${screenHeight}, ${screenDensity}dpi). Ready.", LogLevel.VISION)
+            Logger.log("VISION", "Live Screen GPU Framebuffer active (${screenWidth}x${screenHeight}, ${screenDensity}dpi). Ready.", LogLevel.VISION)
 
         } catch (e: Throwable) {
             Logger.log("VISION", "MediaProjection initialization error: ${e.javaClass.simpleName} - ${e.message}", LogLevel.ERROR)
             _isCapturing.value = false
+        }
+    }
+
+    private fun processAndCacheImage(image: Image) {
+        try {
+            val planes = image.planes
+            val buffer: ByteBuffer = planes[0].buffer
+            val pixelStride = planes[0].pixelStride
+            val rowStride = planes[0].rowStride
+            val rowPadding = rowStride - pixelStride * screenWidth
+
+            val rawBitmap = Bitmap.createBitmap(
+                screenWidth + rowPadding / pixelStride,
+                screenHeight,
+                Bitmap.Config.ARGB_8888
+            )
+            rawBitmap.copyPixelsFromBuffer(buffer)
+            val finalBitmap = Bitmap.createBitmap(rawBitmap, 0, 0, screenWidth, screenHeight)
+
+            synchronized(frameLock) {
+                latestFrameBitmap = finalBitmap
+            }
+        } catch (_: Exception) {
+        } finally {
+            image.close()
         }
     }
 
@@ -249,28 +287,17 @@ class ScreenCaptureService : Service() {
         try {
             image = reader.acquireLatestImage()
             if (image != null) {
-                val planes = image.planes
-                val buffer: ByteBuffer = planes[0].buffer
-                val pixelStride = planes[0].pixelStride
-                val rowStride = planes[0].rowStride
-                val rowPadding = rowStride - pixelStride * screenWidth
-
-                val rawBitmap = Bitmap.createBitmap(
-                    screenWidth + rowPadding / pixelStride,
-                    screenHeight,
-                    Bitmap.Config.ARGB_8888
-                )
-                rawBitmap.copyPixelsFromBuffer(buffer)
-                val finalBitmap = Bitmap.createBitmap(rawBitmap, 0, 0, screenWidth, screenHeight)
-                Logger.log("VISION", "Captured live screen frame (${screenWidth}x${screenHeight}) via MediaProjection.", LogLevel.VISION)
-                return finalBitmap
+                processAndCacheImage(image)
             }
         } catch (e: Exception) {
             Logger.log("VISION", "Frame acquisition exception: ${e.message}", LogLevel.INFO)
         } finally {
             image?.close()
         }
-        return null
+
+        synchronized(frameLock) {
+            return latestFrameBitmap?.let { Bitmap.createBitmap(it) }
+        }
     }
 
     private fun cleanup() {
@@ -282,6 +309,9 @@ class ScreenCaptureService : Service() {
         virtualDisplay = null
         imageReader = null
         mediaProjection = null
+        synchronized(frameLock) {
+            latestFrameBitmap = null
+        }
         _isCapturing.value = false
     }
 
