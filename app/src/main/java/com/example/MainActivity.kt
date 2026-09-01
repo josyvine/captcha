@@ -134,20 +134,13 @@ class MainActivity : ComponentActivity() {
                             0 -> DashboardScreen(
                                 viewModel = viewModel,
                                 onRequestMediaProjection = {
-                                    if (CaptchaAccessibilityService.instance != null) {
-                                        viewModel.setMediaProjectionAuthorized(true)
-                                        viewModel.refreshCurrentFrame()
-                                        Toast.makeText(this@MainActivity, "Live Screen Capture Active via Accessibility Engine!", Toast.LENGTH_SHORT).show()
-                                        Logger.log("VISION", "Screen capture live via native Accessibility engine. Frame refreshed.", LogLevel.VISION)
-                                    } else {
-                                        try {
-                                            val mpManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as? MediaProjectionManager
-                                            if (mpManager != null) {
-                                                projectionLauncher.launch(mpManager.createScreenCaptureIntent())
-                                            }
-                                        } catch (e: Throwable) {
-                                            Logger.log("VISION", "MediaProjection launch notice: ${e.message}", LogLevel.INFO)
+                                    try {
+                                        val mpManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as? MediaProjectionManager
+                                        if (mpManager != null) {
+                                            projectionLauncher.launch(mpManager.createScreenCaptureIntent())
                                         }
+                                    } catch (e: Throwable) {
+                                        Logger.log("VISION", "MediaProjection launch notice: ${e.message}", LogLevel.INFO)
                                     }
                                 }
                             )
