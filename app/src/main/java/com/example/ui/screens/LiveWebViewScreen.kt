@@ -31,6 +31,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -69,6 +70,28 @@ fun LiveWebViewScreen(
     val selectedVoice by viewModel.selectedVoice.collectAsState()
     val selectedModel by viewModel.selectedModel.collectAsState()
     val currentFrame by viewModel.currentFrame.collectAsState()
+
+    // Helper to safely send compressed JPEG frames into the Gemini Live WebSocket engine
+    fun pushFrameToEngine(bitmap: Bitmap) {
+        val wv = webViewInstance ?: return
+        try {
+            val stream = ByteArrayOutputStream()
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 70, stream)
+            val base64 = Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP)
+            wv.post {
+                wv.evaluateJavascript("window.injectScreenFrame('$base64');", null)
+            }
+        } catch (e: Exception) {
+            Logger.log("LIVE_BRIDGE", "Frame push notice: ${e.message}", LogLevel.INFO)
+        }
+    }
+
+    // Connect real-time continuous background streaming hook
+    LaunchedEffect(webViewInstance) {
+        MainViewModel.onFrameCapturedForLive = { liveBitmap ->
+            pushFrameToEngine(liveBitmap)
+        }
+    }
 
     Column(
         modifier = modifier
@@ -120,10 +143,7 @@ fun LiveWebViewScreen(
                     onClick = {
                         val frame = currentFrame
                         if (frame != null) {
-                            val stream = ByteArrayOutputStream()
-                            frame.compress(Bitmap.CompressFormat.JPEG, 75, stream)
-                            val base64 = Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP)
-                            webViewInstance?.evaluateJavascript("window.injectScreenFrame('$base64');", null)
+                            pushFrameToEngine(frame)
                             Logger.log("VISION", "Manually pushed current screen frame to Live stream.", LogLevel.VISION)
                             Toast.makeText(context, "Frame sent to Live stream", Toast.LENGTH_SHORT).show()
                         } else {
@@ -277,10 +297,7 @@ fun LiveWebViewScreen(
                                     viewModel.refreshCurrentFrame()
                                     val frame = viewModel.currentFrame.value
                                     if (frame != null) {
-                                        val stream = ByteArrayOutputStream()
-                                        frame.compress(Bitmap.CompressFormat.JPEG, 75, stream)
-                                        val base64 = Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP)
-                                        webViewInstance?.evaluateJavascript("window.injectScreenFrame('$base64');", null)
+                                        pushFrameToEngine(frame)
                                     }
                                 }
                             }
