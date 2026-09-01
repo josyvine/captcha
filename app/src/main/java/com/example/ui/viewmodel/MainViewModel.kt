@@ -69,13 +69,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _availableModels = MutableStateFlow<List<String>>(
         listOf(
-            "gemini-2.5-flash",
-            "gemini-2.0-flash",
-            "gemini-1.5-flash",
-            "gemini-1.5-pro",
+            "gemini-3.5-flash",
+            "gemini-3.1-flash-lite",
+            "gemini-3.6-flash",
             "gemini-3.1-flash-live-preview",
-            "gemini-2.5-flash-native-audio-preview-12-2025",
-            "gemini-2.0-flash-exp"
+            "gemini-2.5-flash-native-audio-preview-12-2025"
         )
     )
     val availableModels: StateFlow<List<String>> = _availableModels.asStateFlow()
@@ -156,9 +154,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         FloatingHudService.onEmergencyPauseToggled = { paused ->
             if (paused) {
                 FloatingHudService.hudStatus.value = HudStatus.PAUSED
+                CaptchaAccessibilityService.isSolvingActive = false
                 Logger.log("SYSTEM", "Emergency Auto-Pause triggered. Session halted to protect account safety.", LogLevel.SYSTEM)
             } else {
                 FloatingHudService.hudStatus.value = HudStatus.STANDBY
+                if (_isAutoSolveActive.value) {
+                    CaptchaAccessibilityService.isSolvingActive = true
+                }
                 Logger.log("SYSTEM", "Session resumed.", LogLevel.SYSTEM)
             }
         }
@@ -297,6 +299,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun toggleAutoSolve(enabled: Boolean) {
         _isAutoSolveActive.value = enabled
         FloatingHudService.isAutoSolveEnabled.value = enabled
+        CaptchaAccessibilityService.isSolvingActive = enabled
 
         autoSolveJob?.cancel()
         if (enabled) {
@@ -333,6 +336,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch {
             _isSolving.value = true
+            CaptchaAccessibilityService.isSolvingActive = true
             FloatingHudService.hudStatus.value = HudStatus.CAPTURING
             FloatingHudService.marqueeLog.value = "Capturing live screen..."
 
@@ -340,6 +344,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _currentFrame.value = frame
             FloatingHudService.targetSnapshot.value = frame
 
+            // If Gemini Live mode is active, live stream handles processing
+            if (_engineMode.value == EngineMode.GEMINI_LIVE) {
+                FloatingHudService.hudStatus.value = HudStatus.THINKING
+                FloatingHudService.marqueeLog.value = "Gemini Live streaming..."
+                _isSolving.value = false
+                delay(600)
+                FloatingHudService.hudStatus.value = HudStatus.STANDBY
+                onFinished?.invoke(true)
+                return@launch
+            }
+
+            // Standard REST Vision Engine execution
             FloatingHudService.hudStatus.value = HudStatus.THINKING
             FloatingHudService.marqueeLog.value = "Gemini Cognitive Reasoning..."
 
@@ -379,6 +395,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             FloatingHudService.marqueeLog.value = "Submitted successfully."
                             delay(600)
                             FloatingHudService.hudStatus.value = HudStatus.STANDBY
+                            if (!_isAutoSolveActive.value) {
+                                CaptchaAccessibilityService.isSolvingActive = false
+                            }
                             onFinished?.invoke(true)
                         }
                     }
@@ -386,6 +405,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     delay(500)
                     FloatingHudService.hudStatus.value = HudStatus.STANDBY
                     FloatingHudService.marqueeLog.value = "Solved (${solution.latencyMs}ms)"
+                    if (!_isAutoSolveActive.value) {
+                        CaptchaAccessibilityService.isSolvingActive = false
+                    }
                     onFinished?.invoke(true)
                 }
 
@@ -397,6 +419,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _toastMessage.value = "Solve error: ${err.message}"
                 delay(1200)
                 FloatingHudService.hudStatus.value = HudStatus.STANDBY
+                if (!_isAutoSolveActive.value) {
+                    CaptchaAccessibilityService.isSolvingActive = false
+                }
                 onFinished?.invoke(false)
             }
         }
@@ -432,6 +457,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         val accessibility = CaptchaAccessibilityService.instance
         if (accessibility != null) {
+            CaptchaAccessibilityService.isSolvingActive = true
             accessibility.performOrganicTyping(
                 textToType = answer,
                 targetInputBounds = null,
@@ -441,6 +467,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     FloatingHudService.hudStatus.value = HudStatus.SUBMITTING
                     delay(500)
                     FloatingHudService.hudStatus.value = HudStatus.STANDBY
+                    if (!_isAutoSolveActive.value) {
+                        CaptchaAccessibilityService.isSolvingActive = false
+                    }
                 }
             }
         }
@@ -455,6 +484,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         val accessibility = CaptchaAccessibilityService.instance
         if (accessibility != null) {
+            CaptchaAccessibilityService.isSolvingActive = true
             accessibility.performCoordinateTap(
                 xPercent = xPercent,
                 yPercent = yPercent,
@@ -463,6 +493,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 viewModelScope.launch {
                     delay(300)
                     FloatingHudService.hudStatus.value = HudStatus.STANDBY
+                    if (!_isAutoSolveActive.value) {
+                        CaptchaAccessibilityService.isSolvingActive = false
+                    }
                 }
             }
         }
@@ -495,6 +528,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         sessionTimerJob?.cancel()
         autoSolveJob?.cancel()
         screenCaptureManager?.release()
+        CaptchaAccessibilityService.isSolvingActive = false
         super.onCleared()
     }
 }
