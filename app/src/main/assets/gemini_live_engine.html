@@ -324,8 +324,8 @@
         <span id="btnLiveText">Start Gemini Live Stream</span>
       </button>
 
-      <button class="btn btn-primary" onclick="sendFrameSample()">
-        <span>📸 Stream Target Frame</span>
+      <button class="btn btn-primary" onclick="window.triggerLiveSolve()">
+        <span>⚡ Trigger Live Solve</span>
       </button>
       <button class="btn" onclick="clearLiveLogs()">
         <span>🗑️ Clear Stream</span>
@@ -502,6 +502,29 @@
       }
     }
 
+    // Called from Floating HUD / ViewModel to force an instant solve on the live frame
+    window.triggerLiveSolve = function() {
+      if (!liveWs || liveWs.readyState !== WebSocket.OPEN) {
+        appendLog("Cannot trigger solve: WebSocket not connected.");
+        return;
+      }
+      const promptTurn = {
+        clientContent: {
+          turns: [
+            {
+              role: "user",
+              parts: [
+                { text: "Inspect the 2Captcha puzzle on the screen right now. Solve it immediately and call type_answer or click_coordinate tool." }
+              ]
+            }
+          ],
+          turnComplete: true
+        }
+      };
+      liveWs.send(JSON.stringify(promptTurn));
+      appendLog("Dispatched active solve command to Gemini Live.");
+    };
+
     // Called directly from Compose Android Bridge
     window.startLiveSession = function(key, model, voice, rulesJson) {
       if (key) apiKey = key;
@@ -581,15 +604,15 @@
 You operate in strict ROBOTIC MODE. NEVER output conversational small talk, filler, or explanations.
 
 CRITICAL DIRECTIVES:
-1. ROBOTIC EXECUTION ONLY: Speak strictly what is needed (under 4 words). Output directly via tools or <answer> tags.
-2. 2CAPTCHA AREA DETECTION: When entering the captcha working area, announce concisely: "Inside captcha area" and read the directive above the puzzle.
-3. RED ERROR CORRECTION / HINT DETECTION: If a red/orange banner appears above the captcha containing "Right answer is...", "Correct answer:", or "Your answer was wrong", immediately invoke the 'report_hint' tool with the exact correct value!
-4. SOLVING CAPTCHA CATEGORIES:
-   - TEXT & MATH CAPTCHAS: Read distorted text, numerals in words ("eight hundred" -> 800), and math equations ("26 + 6 = ?" -> 32). Call 'type_answer' tool immediately.
-   - ANIMATED & MOVING CAPTCHAS: Track moving characters drifting across sequential video frames from left to right, combine them, and call 'type_answer'.
-   - INTERACTIVE & PUZZLE CAPTCHAS: For coordinate matching (e.g. "Click on guitar", "Click in order 1,2,3"), calculate the center coordinate as percentage (0-100%) of width (X) and height (Y) and invoke 'click_coordinate'.
-${learnedRulesPrompt}
-Be precise, extremely fast, and execute tool calls immediately.`;
+1. ROBOTIC EXECUTION ONLY: Output directly via tools. DO NOT wait for voice speech.
+2. CONTINUOUS PROACTIVE SOLVING: As you watch the video stream, whenever a new 2Captcha puzzle appears (distorted alphanumeric text, digits, math equation, multi-frame moving characters, or puzzle coordinates), IMMEDIATELY call the appropriate tool ('type_answer' or 'click_coordinate').
+3. RED ERROR CORRECTION / HINT DETECTION: If a red banner appears above the captcha containing "Right answer is...", "Correct answer:", or "Your answer was wrong", immediately invoke 'report_hint' tool with the exact correct value!
+4. CAPTCHA FORMATS:
+   - TEXT & DIGITS: Read characters accurately in left-to-right order -> call 'type_answer(text="...")'.
+   - MATH ARITHMETIC: Compute exact numeric answer e.g. "26 + 6 = ?" -> call 'type_answer(text="32")'.
+   - MULTI-FRAME CHARACTERS: Combine alternating character sequences -> call 'type_answer(text="...")'.
+   - COORDINATE PUZZLES: Compute center percentage X (0-100%) and Y (0-100%) of the target match -> call 'click_coordinate(x_percent=..., y_percent=...)'.
+${learnedRulesPrompt}`;
 
         const tools = [
           {
@@ -741,7 +764,6 @@ Be precise, extremely fast, and execute tool calls immediately.`;
             if (content.interrupted) {
               clearAudioQueue();
               appendTranscript(" [Interrupted]");
-              appendLog("Barge-in interruption received.");
             }
 
             if (content.modelTurn && content.modelTurn.parts) {
@@ -845,7 +867,6 @@ Be precise, extremely fast, and execute tool calls immediately.`;
 
           const base64Audio = arrayBufferToBase64(pcmBuffer);
 
-          // FIXED: Direct realtimeInput.audio schema (mediaChunks is deprecated)
           liveWs.send(JSON.stringify({
             realtimeInput: {
               audio: {
@@ -934,7 +955,6 @@ Be precise, extremely fast, and execute tool calls immediately.`;
       }
 
       if (liveWs && liveWs.readyState === WebSocket.OPEN) {
-        // FIXED: Direct realtimeInput.video schema (mediaChunks is deprecated)
         const framePacket = {
           realtimeInput: {
             video: {
