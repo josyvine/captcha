@@ -33,6 +33,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     companion object {
         var onFrameCapturedForLive: ((Bitmap) -> Unit)? = null
+        var onTriggerLiveSolveInWebView: (() -> Unit)? = null
     }
 
     // UI States
@@ -118,26 +119,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         startSessionTimer()
         startContinuousFrameSync()
 
-        // Auto-enable screen capture readiness if Accessibility is active
-        if (CaptchaAccessibilityService.instance != null) {
-            _isMediaProjectionAuthorized.value = true
-        }
-
-        viewModelScope.launch {
-            CaptchaAccessibilityService.isConnected.collect { connected ->
-                if (connected) {
-                    _isMediaProjectionAuthorized.value = true
-                    delay(300)
-                    refreshCurrentFrame()
-                }
-            }
-        }
-
-        // Observe ScreenCaptureService state
+        // Observe actual ScreenCaptureService state (Only becomes true after Android permission is granted)
         viewModelScope.launch {
             ScreenCaptureService.isCapturing.collect { capturing ->
+                _isMediaProjectionAuthorized.value = capturing
                 if (capturing) {
-                    _isMediaProjectionAuthorized.value = true
                     delay(300)
                     refreshCurrentFrame()
                 }
@@ -377,12 +363,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             FloatingHudService.targetSnapshot.value = frame
             onFrameCapturedForLive?.invoke(frame)
 
-            // If Gemini Live mode is active, live stream handles processing
+            // If Gemini Live mode is active, trigger solve directly inside the Live WebSocket stream
             if (_engineMode.value == EngineMode.GEMINI_LIVE) {
                 FloatingHudService.hudStatus.value = HudStatus.THINKING
-                FloatingHudService.marqueeLog.value = "Gemini Live streaming..."
+                FloatingHudService.marqueeLog.value = "Gemini Live analyzing..."
+                onTriggerLiveSolveInWebView?.invoke()
                 _isSolving.value = false
-                delay(600)
+                delay(800)
                 FloatingHudService.hudStatus.value = HudStatus.STANDBY
                 onFinished?.invoke(true)
                 return@launch
