@@ -86,10 +86,15 @@ fun LiveWebViewScreen(
         }
     }
 
-    // Connect real-time continuous background streaming hook
+    // Connect real-time continuous background streaming hook and live solve trigger
     LaunchedEffect(webViewInstance) {
         MainViewModel.onFrameCapturedForLive = { liveBitmap ->
             pushFrameToEngine(liveBitmap)
+        }
+        MainViewModel.onTriggerLiveSolveInWebView = {
+            webViewInstance?.post {
+                webViewInstance?.evaluateJavascript("window.triggerLiveSolve();", null)
+            }
         }
     }
 
