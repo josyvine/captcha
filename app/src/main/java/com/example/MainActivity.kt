@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.media.projection.MediaProjectionManager
 import android.os.Bundle
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -21,12 +22,10 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import android.util.Log
 import com.example.data.PreferencesManager
 import com.example.model.LogLevel
 import com.example.service.CaptchaAccessibilityService
 import com.example.service.ScreenCaptureService
-import com.example.util.Logger
 import com.example.ui.components.HorizontalNavigationFooter
 import com.example.ui.screens.DashboardScreen
 import com.example.ui.screens.LiveWebViewScreen
@@ -35,6 +34,7 @@ import com.example.ui.screens.TerminalScreen
 import com.example.ui.theme.DeepNavyBg
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.viewmodel.MainViewModel
+import com.example.util.Logger
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -125,6 +125,7 @@ class MainActivity : ComponentActivity() {
                 ) { innerPadding ->
                     HorizontalPager(
                         state = pagerState,
+                        beyondViewportPageCount = 3,
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(innerPadding)
