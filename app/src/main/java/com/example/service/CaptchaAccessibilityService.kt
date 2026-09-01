@@ -36,6 +36,11 @@ class CaptchaAccessibilityService : AccessibilityService() {
     private val random = Random()
     private var currentTypingJob: Job? = null
 
+    @Volatile
+    private var isTypingInProgress: Boolean = false
+    private var lastCorrectionDetectedText = ""
+    private var lastCorrectionDetectedTime = 0L
+
     companion object {
         private val _isConnected = MutableStateFlow(false)
         val isConnected: StateFlow<Boolean> = _isConnected.asStateFlow()
@@ -103,6 +108,7 @@ class CaptchaAccessibilityService : AccessibilityService() {
     override fun onUnbind(intent: android.content.Intent?): Boolean {
         instance = null
         isSolvingActive = false
+        isTypingInProgress = false
         currentTypingJob?.cancel()
         Logger.log("ACCESSIBILITY", "Captcha Accessibility Service unbound.", LogLevel.ACCESSIBILITY)
         return super.onUnbind(intent)
@@ -111,8 +117,8 @@ class CaptchaAccessibilityService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
 
-        // Safety Filter 1: If auto-solving is not actively engaged, stay 100% idle
-        if (!isSolvingActive) return
+        // Safety Filter 1: If auto-solving is not actively engaged or typing is already in progress, stay idle
+        if (!isSolvingActive || isTypingInProgress) return
 
         // Safety Filter 2: Ignore keyboard and system UI packages
         val pkg = event.packageName?.toString() ?: ""
@@ -132,6 +138,7 @@ class CaptchaAccessibilityService : AccessibilityService() {
 
     override fun onInterrupt() {
         isSolvingActive = false
+        isTypingInProgress = false
         currentTypingJob?.cancel()
         Logger.log("ACCESSIBILITY", "Accessibility Service interrupted.", LogLevel.ACCESSIBILITY)
     }
@@ -208,7 +215,14 @@ class CaptchaAccessibilityService : AccessibilityService() {
             val matcher = pattern.matcher(combined)
             if (matcher.find()) {
                 val correctAnswer = matcher.group(1)?.trim() ?: ""
-                if (correctAnswer.isNotBlank()) {
+                val now = System.currentTimeMillis()
+                
+                // Debounce error banner detection to prevent recursive typing resets
+                if (correctAnswer.isNotBlank() && 
+                    (!correctAnswer.equals(lastCorrectionDetectedText, ignoreCase = true) || (now - lastCorrectionDetectedTime > 6000L))
+                ) {
+                    lastCorrectionDetectedText = correctAnswer
+                    lastCorrectionDetectedTime = now
                     Logger.log("LEARNING", "2Captcha correction banner detected! Correct: '$correctAnswer'", LogLevel.LEARNING)
                     onErrorCorrectionDetected?.invoke("PreviousGuess", correctAnswer, "2Captcha Task")
                 }
@@ -373,63 +387,67 @@ class CaptchaAccessibilityService : AccessibilityService() {
                 }
             }
 
+            isTypingInProgress = true
             Logger.log("ACCESSIBILITY", "Initiating organic typing for \"$cleanText\"...", LogLevel.ACCESSIBILITY)
 
-            // Focus active 2Captcha input field
-            findAndFocusInputField(targetInputBounds, telemetry)
-            delay(120)
+            try {
+                // Focus active 2Captcha input field
+                findAndFocusInputField(targetInputBounds, telemetry)
+                delay(120)
 
-            // Clean reset input box before typing to prevent character overlap
-            applyTextToActiveFocus("")
-            delay(60)
+                // Clean reset input box before typing to prevent character overlap
+                applyTextToActiveFocus("")
+                delay(60)
 
-            val currentBuffer = StringBuilder()
-            val chars = cleanText.toCharArray()
+                val currentBuffer = StringBuilder()
+                val chars = cleanText.toCharArray()
 
-            for (i in chars.indices) {
-                val targetChar = chars[i]
+                for (i in chars.indices) {
+                    val targetChar = chars[i]
 
-                // Realistic Typo Check (3% probability)
-                if (random.nextFloat() < telemetry.typoProbability && targetChar.isLetterOrDigit()) {
-                    val typoChar = getAdjacentQwertyChar(targetChar)
-                    currentBuffer.append(typoChar)
+                    // Realistic Typo Check (3% probability)
+                    if (random.nextFloat() < telemetry.typoProbability && targetChar.isLetterOrDigit()) {
+                        val typoChar = getAdjacentQwertyChar(targetChar)
+                        currentBuffer.append(typoChar)
+                        applyTextToActiveFocus(currentBuffer.toString())
+                        Logger.log("ACCESSIBILITY", "Humanized Typo triggered: '$typoChar'...", LogLevel.ACCESSIBILITY)
+
+                        delay(90)
+                        currentBuffer.deleteCharAt(currentBuffer.length - 1)
+                        applyTextToActiveFocus(currentBuffer.toString())
+                        delay(120)
+                    }
+
+                    // Append correct character
+                    currentBuffer.append(targetChar)
                     applyTextToActiveFocus(currentBuffer.toString())
-                    Logger.log("ACCESSIBILITY", "Humanized Typo triggered: '$typoChar'...", LogLevel.ACCESSIBILITY)
 
-                    delay(90)
-                    currentBuffer.deleteCharAt(currentBuffer.length - 1)
-                    applyTextToActiveFocus(currentBuffer.toString())
-                    delay(120)
-                }
-
-                // Append correct character
-                currentBuffer.append(targetChar)
-                applyTextToActiveFocus(currentBuffer.toString())
-
-                // Keystroke pacing delay (180ms - 320ms)
-                val pacing = telemetry.minKeystrokeMs + random.nextInt(
-                    maxOf(1, telemetry.maxKeystrokeMs - telemetry.minKeystrokeMs)
-                )
-                delay(pacing.toLong())
-
-                // Cognitive Hesitation
-                if (i < chars.size - 1 && random.nextFloat() < telemetry.hesitationProbability) {
-                    val hesitation = telemetry.hesitationMinMs + random.nextInt(
-                        maxOf(1, telemetry.hesitationMaxMs - telemetry.hesitationMinMs)
+                    // Keystroke pacing delay (180ms - 320ms)
+                    val pacing = telemetry.minKeystrokeMs + random.nextInt(
+                        maxOf(1, telemetry.maxKeystrokeMs - telemetry.minKeystrokeMs)
                     )
-                    delay(hesitation.toLong())
+                    delay(pacing.toLong())
+
+                    // Cognitive Hesitation
+                    if (i < chars.size - 1 && random.nextFloat() < telemetry.hesitationProbability) {
+                        val hesitation = telemetry.hesitationMinMs + random.nextInt(
+                            maxOf(1, telemetry.hesitationMaxMs - telemetry.hesitationMinMs)
+                        )
+                        delay(hesitation.toLong())
+                    }
                 }
+
+                // Post-typing reaction delay
+                val submitDelay = 150 + random.nextInt(150)
+                delay(submitDelay.toLong())
+
+                // Automatically trigger submit button click
+                clickSubmitButton(telemetry)
+                delay(300)
+            } finally {
+                isTypingInProgress = false
+                onFinished()
             }
-
-            // Post-typing reaction delay
-            val submitDelay = 150 + random.nextInt(150)
-            delay(submitDelay.toLong())
-
-            // Automatically trigger submit button click
-            clickSubmitButton(telemetry)
-            delay(300)
-
-            onFinished()
         }
     }
 
