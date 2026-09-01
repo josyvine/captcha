@@ -31,7 +31,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -70,14 +69,6 @@ fun LiveWebViewScreen(
     val selectedVoice by viewModel.selectedVoice.collectAsState()
     val selectedModel by viewModel.selectedModel.collectAsState()
     val currentFrame by viewModel.currentFrame.collectAsState()
-
-    DisposableEffect(Unit) {
-        onDispose {
-            webViewInstance?.evaluateJavascript("disconnectLiveWebSocket();", null)
-            webViewInstance?.destroy()
-            webViewInstance = null
-        }
-    }
 
     Column(
         modifier = modifier
