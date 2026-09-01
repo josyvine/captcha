@@ -31,6 +31,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     var screenCaptureManager: ScreenCaptureManager? = null
 
+    companion object {
+        var onFrameCapturedForLive: ((Bitmap) -> Unit)? = null
+    }
+
     // UI States
     private val _selectedTab = MutableStateFlow(0)
     val selectedTab: StateFlow<Int> = _selectedTab.asStateFlow()
@@ -178,9 +182,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     if (frame != null) {
                         _currentFrame.value = frame
                         FloatingHudService.targetSnapshot.value = frame
+                        onFrameCapturedForLive?.invoke(frame)
                     }
                 } catch (_: Exception) {}
-                delay(1000) // 1 FPS live preview refresh
+                delay(800) // ~1.25 FPS continuous video stream for Gemini Live
             }
         }
     }
@@ -306,6 +311,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (bmp != null) {
                 _currentFrame.value = bmp
                 FloatingHudService.targetSnapshot.value = bmp
+                onFrameCapturedForLive?.invoke(bmp)
             }
         }
     }
@@ -369,6 +375,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             _currentFrame.value = frame
             FloatingHudService.targetSnapshot.value = frame
+            onFrameCapturedForLive?.invoke(frame)
 
             // If Gemini Live mode is active, live stream handles processing
             if (_engineMode.value == EngineMode.GEMINI_LIVE) {
