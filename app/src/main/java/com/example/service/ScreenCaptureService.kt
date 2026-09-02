@@ -265,6 +265,8 @@ class ScreenCaptureService : Service() {
     private fun processAndCacheImage(image: Image) {
         try {
             val planes = image.planes
+            if (planes.isEmpty()) return
+
             val buffer: ByteBuffer = planes[0].buffer
             val pixelStride = planes[0].pixelStride
             val rowStride = planes[0].rowStride
@@ -276,7 +278,14 @@ class ScreenCaptureService : Service() {
                 Bitmap.Config.ARGB_8888
             )
             rawBitmap.copyPixelsFromBuffer(buffer)
-            val finalBitmap = Bitmap.createBitmap(rawBitmap, 0, 0, screenWidth, screenHeight)
+            
+            val finalBitmap = if (rowPadding == 0) {
+                rawBitmap
+            } else {
+                val cropped = Bitmap.createBitmap(rawBitmap, 0, 0, screenWidth, screenHeight)
+                rawBitmap.recycle()
+                cropped
+            }
 
             synchronized(frameLock) {
                 latestFrameBitmap = finalBitmap
@@ -285,6 +294,22 @@ class ScreenCaptureService : Service() {
         } finally {
             image.close()
         }
+    }
+
+    /**
+     * Drains stale queued frames from ImageReader and purges cached frame buffer
+     */
+    fun clearFrameBuffer() {
+        synchronized(frameLock) {
+            latestFrameBitmap = null
+        }
+        try {
+            var stale = imageReader?.acquireLatestImage()
+            while (stale != null) {
+                stale.close()
+                stale = imageReader?.acquireLatestImage()
+            }
+        } catch (_: Exception) {}
     }
 
     /**
