@@ -31,6 +31,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -71,15 +72,22 @@ fun LiveWebViewScreen(
     val selectedModel by viewModel.selectedModel.collectAsState()
     val currentFrame by viewModel.currentFrame.collectAsState()
 
+    var lastFramePushTime by remember { mutableStateOf(0L) }
+
     // Helper to safely send compressed JPEG frames into the Gemini Live WebSocket engine
     fun pushFrameToEngine(bitmap: Bitmap) {
         val wv = webViewInstance ?: return
+        val now = System.currentTimeMillis()
+        // Rate-limit frame injection to avoid socket overflow / connection drops
+        if (now - lastFramePushTime < 350L) return
+        lastFramePushTime = now
+
         try {
             val stream = ByteArrayOutputStream()
-            bitmap.compress(Bitmap.CompressFormat.JPEG, 70, stream)
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 75, stream)
             val base64 = Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP)
             wv.post {
-                wv.evaluateJavascript("window.injectScreenFrame('$base64');", null)
+                wv.evaluateJavascript("if (window.injectScreenFrame) { window.injectScreenFrame('$base64'); }", null)
             }
         } catch (e: Exception) {
             Logger.log("LIVE_BRIDGE", "Frame push notice: ${e.message}", LogLevel.INFO)
@@ -93,8 +101,15 @@ fun LiveWebViewScreen(
         }
         MainViewModel.onTriggerLiveSolveInWebView = {
             webViewInstance?.post {
-                webViewInstance?.evaluateJavascript("window.triggerLiveSolve();", null)
+                webViewInstance?.evaluateJavascript("if (window.triggerLiveSolve) { window.triggerLiveSolve(); }", null)
             }
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            MainViewModel.onFrameCapturedForLive = null
+            MainViewModel.onTriggerLiveSolveInWebView = null
         }
     }
 
@@ -105,7 +120,7 @@ fun LiveWebViewScreen(
             .padding(start = 10.dp, end = 10.dp, top = 6.dp, bottom = 4.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        // Ultra-compact single-line top bar with status indicator and actions
+        // Compact single-line top bar with status indicator and actions
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -278,7 +293,9 @@ fun LiveWebViewScreen(
                             @JavascriptInterface
                             fun onLiveClick(xPercent: Float, yPercent: Float) {
                                 (context as? android.app.Activity)?.runOnUiThread {
-                                    viewModel.onLiveClickReceived(xPercent, yPercent)
+                                    val clampedX = xPercent.coerceIn(0.0f, 100.0f)
+                                    val clampedY = yPercent.coerceIn(0.0f, 100.0f)
+                                    viewModel.onLiveClickReceived(clampedX, clampedY)
                                 }
                             }
 
