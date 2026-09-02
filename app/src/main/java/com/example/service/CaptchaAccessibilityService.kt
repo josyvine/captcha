@@ -82,6 +82,7 @@ class CaptchaAccessibilityService : AccessibilityService() {
                                 Logger.log("ACCESSIBILITY", "Captured live screen frame via Accessibility API (${copy?.width}x${copy?.height}).", LogLevel.VISION)
                                 if (cont.isActive) cont.resume(copy)
                             } catch (e: Throwable) {
+                                Logger.log("ACCESSIBILITY", "Accessibility screenshot copy failed: ${e.message}", LogLevel.ERROR)
                                 if (cont.isActive) cont.resume(null)
                             }
                         }
@@ -146,14 +147,20 @@ class CaptchaAccessibilityService : AccessibilityService() {
     /**
      * Strict check ensuring the active screen is a real 2Captcha task container
      */
-    private fun isStrict2CaptchaScreen(node: AccessibilityNodeInfo): Boolean {
+    fun isStrict2CaptchaScreen(node: AccessibilityNodeInfo): Boolean {
         val text = node.text?.toString() ?: ""
         val desc = node.contentDescription?.toString() ?: ""
-        val combined = "$text $desc".lowercase()
+        val hint = node.hintText?.toString() ?: ""
+        val viewId = node.viewIdResourceName?.lowercase() ?: ""
+        val combined = "$text $desc $hint $viewId".lowercase()
 
         if (combined.contains("2captcha.com") ||
             combined.contains("play-and-earn") ||
-            (combined.contains("2captcha") && combined.contains("balance"))
+            combined.contains("2captcha") ||
+            combined.contains("enter captcha") ||
+            combined.contains("assemble from") ||
+            combined.contains("rate: $") ||
+            combined.contains("cannot solve")
         ) {
             return true
         }
@@ -198,7 +205,7 @@ class CaptchaAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * Inspects active window hierarchy for real 2Captcha red error correction banners
+     * Inspects active window hierarchy for real 2Captcha red error correction banners and input nodes
      */
     private fun inspectNodes(node: AccessibilityNodeInfo) {
         val text = node.text?.toString() ?: ""
@@ -229,14 +236,16 @@ class CaptchaAccessibilityService : AccessibilityService() {
             }
         }
 
-        // Detect valid captcha input fields (excluding Chrome address / search bars)
+        // Detect valid captcha input fields (strictly excluding Chrome address / search bars)
         val viewId = node.viewIdResourceName?.lowercase() ?: ""
-        val isUrlBar = viewId.contains("url_bar") || viewId.contains("search_box") || viewId.contains("omnibox")
+        val isUrlBar = viewId.contains("url_bar") || viewId.contains("search_box") || viewId.contains("omnibox") || viewId.contains("location_bar")
 
         if (!isUrlBar && (node.isEditable || node.className?.contains("EditText", ignoreCase = true) == true)) {
             val bounds = Rect()
             node.getBoundsInScreen(bounds)
-            onInputNodeFound?.invoke(bounds)
+            if (bounds.width() > 50 && bounds.height() > 30) {
+                onInputNodeFound?.invoke(bounds)
+            }
         }
 
         for (i in 0 until node.childCount) {
@@ -324,8 +333,8 @@ class CaptchaAccessibilityService : AccessibilityService() {
         val innerTop = targetBounds.top + (targetBounds.height() * 0.30f).toInt()
         val innerBottom = targetBounds.top + (targetBounds.height() * 0.70f).toInt()
 
-        val tapX = (innerLeft + random.nextInt(maxOf(1, innerRight - innerLeft))).toFloat()
-        val tapY = (innerTop + random.nextInt(maxOf(1, innerBottom - innerTop))).toFloat()
+        val tapX = (innerLeft + random.nextInt(maxOf(1, maxOf(1, innerRight - innerLeft)))).toFloat()
+        val tapY = (innerTop + random.nextInt(maxOf(1, maxOf(1, innerBottom - innerTop)))).toFloat()
 
         val holdDuration = telemetry.touchHoldMinMs + random.nextInt(
             maxOf(1, (telemetry.touchHoldMaxMs - telemetry.touchHoldMinMs).toInt())
@@ -371,20 +380,24 @@ class CaptchaAccessibilityService : AccessibilityService() {
                 return@launch
             }
 
-            // Verify against active screen min/max constraints to prevent stale lagged typing
             val root = rootInActiveWindow
-            if (root != null) {
-                val (minLen, maxLen) = extractCaptchaConstraints(root)
-                if (minLen != null && cleanText.length < minLen) {
-                    Logger.log("ACCESSIBILITY", "Discarded stale answer '$cleanText' (Length ${cleanText.length} < min $minLen).", LogLevel.INFO)
-                    onFinished()
-                    return@launch
-                }
-                if (maxLen != null && cleanText.length > maxLen) {
-                    Logger.log("ACCESSIBILITY", "Discarded stale answer '$cleanText' (Length ${cleanText.length} > max $maxLen).", LogLevel.INFO)
-                    onFinished()
-                    return@launch
-                }
+            if (root == null || !isStrict2CaptchaScreen(root)) {
+                Logger.log("ACCESSIBILITY", "Aborted typing: Current window is not an active 2Captcha task container.", LogLevel.INFO)
+                onFinished()
+                return@launch
+            }
+
+            // Verify against active screen min/max constraints to prevent stale lagged typing
+            val (minLen, maxLen) = extractCaptchaConstraints(root)
+            if (minLen != null && cleanText.length < minLen) {
+                Logger.log("ACCESSIBILITY", "Discarded stale answer '$cleanText' (Length ${cleanText.length} < min $minLen).", LogLevel.INFO)
+                onFinished()
+                return@launch
+            }
+            if (maxLen != null && cleanText.length > maxLen) {
+                Logger.log("ACCESSIBILITY", "Discarded stale answer '$cleanText' (Length ${cleanText.length} > max $maxLen).", LogLevel.INFO)
+                onFinished()
+                return@launch
             }
 
             isTypingInProgress = true
@@ -395,9 +408,9 @@ class CaptchaAccessibilityService : AccessibilityService() {
                 findAndFocusInputField(targetInputBounds, telemetry)
                 delay(120)
 
-                // Clean reset input box before typing to prevent character overlap
+                // Clean reset input box before typing to prevent character overlap / stale text appending
                 applyTextToActiveFocus("")
-                delay(60)
+                delay(80)
 
                 val currentBuffer = StringBuilder()
                 val chars = cleanText.toCharArray()
@@ -405,7 +418,7 @@ class CaptchaAccessibilityService : AccessibilityService() {
                 for (i in chars.indices) {
                     val targetChar = chars[i]
 
-                    // Realistic Typo Check (3% probability)
+                    // Realistic Typo Check (e.g. 3% probability)
                     if (random.nextFloat() < telemetry.typoProbability && targetChar.isLetterOrDigit()) {
                         val typoChar = getAdjacentQwertyChar(targetChar)
                         currentBuffer.append(typoChar)
@@ -422,7 +435,7 @@ class CaptchaAccessibilityService : AccessibilityService() {
                     currentBuffer.append(targetChar)
                     applyTextToActiveFocus(currentBuffer.toString())
 
-                    // Keystroke pacing delay (180ms - 320ms)
+                    // Keystroke pacing delay
                     val pacing = telemetry.minKeystrokeMs + random.nextInt(
                         maxOf(1, telemetry.maxKeystrokeMs - telemetry.minKeystrokeMs)
                     )
@@ -523,7 +536,7 @@ class CaptchaAccessibilityService : AccessibilityService() {
                 }
             }
         } catch (e: Exception) {
-            Logger.log("ACCESSIBILITY", "Submit node search: ${e.message}", LogLevel.INFO)
+            Logger.log("ACCESSIBILITY", "Submit node search exception: ${e.message}", LogLevel.INFO)
         }
     }
 
@@ -531,7 +544,8 @@ class CaptchaAccessibilityService : AccessibilityService() {
         val text = node.text?.toString() ?: ""
         val desc = node.contentDescription?.toString() ?: ""
         val hint = node.hintText?.toString() ?: ""
-        val combined = "$text $desc $hint".lowercase()
+        val viewId = node.viewIdResourceName?.lowercase() ?: ""
+        val combined = "$text $desc $hint $viewId".lowercase()
 
         if (node.isClickable && (
             combined.contains("submit") ||
@@ -541,7 +555,8 @@ class CaptchaAccessibilityService : AccessibilityService() {
             combined.contains("confirm") ||
             combined.contains("ok") ||
             combined.contains("отправить") ||
-            combined.contains("готово")
+            combined.contains("готово") ||
+            combined.contains("btn-success")
         )) {
             return node
         }
