@@ -94,6 +94,13 @@ class FloatingHudService : Service(), LifecycleOwner, SavedStateRegistryOwner {
         var onEmergencyPauseToggled: ((Boolean) -> Unit)? = null
         var onAutoSolveToggled: ((Boolean) -> Unit)? = null
 
+        fun resetSolvingState() {
+            hudStatus.value = HudStatus.STANDBY
+            aiOutput.value = "Ready for Capture"
+            currentLatency.value = 0L
+            targetSnapshot.value = null
+        }
+
         fun start(context: Context) {
             val intent = Intent(context, FloatingHudService::class.java)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -226,6 +233,7 @@ class FloatingHudService : Service(), LifecycleOwner, SavedStateRegistryOwner {
             floatingView = null
         }
         isRunning = false
+        resetSolvingState()
         Logger.log("SYSTEM", "Floating HUD Overlay Service terminated.", LogLevel.SYSTEM)
         super.onDestroy()
     }
@@ -348,7 +356,7 @@ fun FloatingHudContent(
                 }
 
                 // Scraped Target Preview Thumbnail
-                if (snapshot != null) {
+                if (snapshot != null && !snapshot!!.isRecycled) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
