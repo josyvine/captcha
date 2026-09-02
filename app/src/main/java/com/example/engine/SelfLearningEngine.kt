@@ -3,6 +3,8 @@ package com.example.engine
 import com.example.data.PreferencesManager
 import com.example.model.LogLevel
 import com.example.service.CaptchaAccessibilityService
+import com.example.service.FloatingHudService
+import com.example.service.ScreenCaptureService
 import com.example.util.Logger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -37,8 +39,8 @@ class SelfLearningEngine(
         if (cleanCorrect.isBlank()) return
 
         val now = System.currentTimeMillis()
-        // Deduplicate rapid repeat events for the same correction within 3 seconds
-        if (cleanCorrect.equals(lastCorrectionProcessed, ignoreCase = true) && (now - lastCorrectionTimestamp < 3000L)) {
+        // Deduplicate rapid repeat events for the same correction within 6.5 seconds
+        if (cleanCorrect.equals(lastCorrectionProcessed, ignoreCase = true) && (now - lastCorrectionTimestamp < 6500L)) {
             return
         }
         lastCorrectionProcessed = cleanCorrect
@@ -47,10 +49,16 @@ class SelfLearningEngine(
         scope.launch {
             Logger.log("LEARNING", "Autonomous Self-Learning triggered for correction: '$cleanCorrect' (Directive: $directive)", LogLevel.LEARNING)
 
+            // Purge stale framebuffer caches to avoid capturing the error banner as the next captcha
+            ScreenCaptureService.instance?.clearFrameBuffer()
+
             // 1. Instant Auto-Recovery: Humanized Typing & Submission of the correct answer
             val accessibility = CaptchaAccessibilityService.instance
-            if (accessibility != null) {
-                delay(200)
+            val root = accessibility?.rootInActiveWindow
+            
+            if (accessibility != null && root != null && accessibility.isStrict2CaptchaScreen(root)) {
+                FloatingHudService.marqueeLog.value = "Auto-Recovery: $cleanCorrect"
+                delay(250)
                 accessibility.performOrganicTyping(
                     textToType = cleanCorrect,
                     targetInputBounds = null,
@@ -58,6 +66,8 @@ class SelfLearningEngine(
                 ) {
                     Logger.log("ACCESSIBILITY", "Auto-recovery submission executed for '$cleanCorrect'.", LogLevel.ACCESSIBILITY)
                 }
+            } else {
+                Logger.log("LEARNING", "Auto-recovery typing skipped: Screen is not an active 2Captcha container.", LogLevel.INFO)
             }
 
             // 2. Meta-Reflection in background to generate heuristic rule
@@ -75,8 +85,12 @@ class SelfLearningEngine(
             result.onSuccess { rule ->
                 val cleanRule = rule.trim()
                 if (cleanRule.isNotBlank()) {
-                    prefs.addLearnedRule(cleanRule)
-                    Logger.log("LEARNING", "Persisted new learned lesson (Total: ${prefs.getLearnedRules().size}/15 rules): \"$cleanRule\"", LogLevel.LEARNING)
+                    val existingRules = prefs.getLearnedRules()
+                    // Avoid saving duplicate rules
+                    if (!existingRules.any { it.equals(cleanRule, ignoreCase = true) }) {
+                        prefs.addLearnedRule(cleanRule)
+                        Logger.log("LEARNING", "Persisted new learned lesson (Total: ${prefs.getLearnedRules().size}/15 rules): \"$cleanRule\"", LogLevel.LEARNING)
+                    }
                 }
             }.onFailure { err ->
                 Logger.log("LEARNING", "Reflection rule generation notice: ${err.message}", LogLevel.INFO)
