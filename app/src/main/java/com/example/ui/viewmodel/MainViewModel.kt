@@ -74,11 +74,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _availableModels = MutableStateFlow<List<String>>(
         listOf(
-            "gemini-3.5-flash",
-            "gemini-3.1-flash-lite",
-            "gemini-3.6-flash",
+            "gemini-2.5-flash",
+            "gemini-2.5-flash-native-audio-preview-12-2025",
             "gemini-3.1-flash-live-preview",
-            "gemini-2.5-flash-native-audio-preview-12-2025"
+            "gemini-3.5-flash",
+            "gemini-3.6-flash"
         )
     )
     val availableModels: StateFlow<List<String>> = _availableModels.asStateFlow()
@@ -120,7 +120,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         startSessionTimer()
         startContinuousFrameSync()
 
-        // Observe actual ScreenCaptureService state (Only becomes true after Android permission is granted)
+        // Observe actual ScreenCaptureService state
         viewModelScope.launch {
             ScreenCaptureService.isCapturing.collect { capturing ->
                 _isMediaProjectionAuthorized.value = capturing
@@ -319,13 +319,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         continue
                     }
 
+                    // Check if foreground screen is a 2Captcha task container
+                    val accessibility = CaptchaAccessibilityService.instance
+                    val root = accessibility?.rootInActiveWindow
+                    if (root != null && !accessibility.isStrict2CaptchaScreen(root)) {
+                        FloatingHudService.marqueeLog.value = "Waiting for 2Captcha Task..."
+                        delay(1500)
+                        continue
+                    }
+
                     suspendCancellableCoroutine<Boolean> { cont ->
                         triggerAutonomousSolve { success ->
                             if (cont.isActive) cont.resume(success)
                         }
                     }
 
-                    // 2.2s delay before next solve attempt
+                    // Pacing delay before next solve attempt
                     delay(2200)
                 }
             }
@@ -341,11 +350,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
+        // Safety Gating: Only solve if on 2Captcha screen
+        val accessibility = CaptchaAccessibilityService.instance
+        val root = accessibility?.rootInActiveWindow
+        if (root != null && !accessibility.isStrict2CaptchaScreen(root)) {
+            Logger.log("ACCESSIBILITY", "Solve bypassed: Active window is not a 2Captcha task.", LogLevel.INFO)
+            FloatingHudService.marqueeLog.value = "Not on 2Captcha Task"
+            onFinished?.invoke(false)
+            return
+        }
+
         viewModelScope.launch {
             _isSolving.value = true
             CaptchaAccessibilityService.isSolvingActive = true
             FloatingHudService.hudStatus.value = HudStatus.CAPTURING
             FloatingHudService.marqueeLog.value = "Capturing live screen..."
+
+            // Flush old solution state to prevent stale data retention
+            _currentSolution.value = null
+            FloatingHudService.aiOutput.value = "..."
 
             val frame = captureLiveFrame()
             if (frame == null) {
@@ -404,9 +427,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 updateTelemetryFromPrefs()
 
                 // Execute organic typing and auto-submission via accessibility
-                val accessibility = CaptchaAccessibilityService.instance
-                if (accessibility != null) {
-                    accessibility.performOrganicTyping(
+                val activeService = CaptchaAccessibilityService.instance
+                if (activeService != null) {
+                    activeService.performOrganicTyping(
                         textToType = solution.cleanAnswer,
                         targetInputBounds = null,
                         telemetry = _humanTelemetry.value
@@ -474,10 +497,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val clean = answer.trim()
         if (clean.isBlank()) return
 
-        // Invalidate stale answers arriving too soon (< 600ms) after a previous submission
+        // Drop stale answers arriving too quickly after submission
         val now = System.currentTimeMillis()
-        if (now - lastSubmitTimestamp < 600L) {
+        if (now - lastSubmitTimestamp < 800L) {
             Logger.log("VISION", "Dropped stale live answer '$clean' (Arrived within ${now - lastSubmitTimestamp}ms of submit).", LogLevel.INFO)
+            return
+        }
+
+        // Safety gating check before typing
+        val accessibility = CaptchaAccessibilityService.instance
+        val root = accessibility?.rootInActiveWindow
+        if (root != null && !accessibility.isStrict2CaptchaScreen(root)) {
+            Logger.log("ACCESSIBILITY", "Live answer '$clean' ignored: Not on 2Captcha screen.", LogLevel.INFO)
             return
         }
 
@@ -488,7 +519,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         prefs.recordAttempt(solved = true, latencyMs = 350L)
         updateTelemetryFromPrefs()
 
-        val accessibility = CaptchaAccessibilityService.instance
         if (accessibility != null) {
             CaptchaAccessibilityService.isSolvingActive = true
             accessibility.performOrganicTyping(
@@ -510,13 +540,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun onLiveClickReceived(xPercent: Float, yPercent: Float) {
+        // Safety gating check before coordinate tap
+        val accessibility = CaptchaAccessibilityService.instance
+        val root = accessibility?.rootInActiveWindow
+        if (root != null && !accessibility.isStrict2CaptchaScreen(root)) {
+            Logger.log("ACCESSIBILITY", "Live tap ignored: Not on 2Captcha screen.", LogLevel.INFO)
+            return
+        }
+
         FloatingHudService.marqueeLog.value = "Puzzle Tap: (${xPercent.toInt()}%, ${yPercent.toInt()}%)"
         FloatingHudService.hudStatus.value = HudStatus.TYPING
 
         prefs.recordAttempt(solved = true, latencyMs = 280L)
         updateTelemetryFromPrefs()
 
-        val accessibility = CaptchaAccessibilityService.instance
         if (accessibility != null) {
             CaptchaAccessibilityService.isSolvingActive = true
             accessibility.performCoordinateTap(
